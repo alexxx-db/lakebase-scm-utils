@@ -257,9 +257,8 @@ export async function createProject(
     ? `${input.githubOwner}/${input.projectName}`
     : "";
 
-  // Upfront expectation: this is a one-time provision that takes a few minutes and
-  // does a lot. Say so, and name the genuinely-slow steps, so the wait doesn't look
-  // like a hang. (Each step below also reports as it runs.)
+  // State what the one-time provisioning creates up front; each step below reports as it
+  // runs. Say what is happening, not how long it takes (no duration/ETA/slow framing).
   {
     const usesGithub = !!input.githubOwner && input.createGithubRepo !== false;
     const tierCount = input.tiers ?? 1;
@@ -271,9 +270,8 @@ export async function createProject(
       tierCount > 1 ? `${tierCount} tiers (prod${tierCount >= 2 ? " + staging" : ""}${tierCount >= 3 ? " + dev" : ""})` : null,
     ].filter(Boolean);
     report(
-      `Setting up "${input.projectName}" , one-time provisioning, usually ~2-4 min. ` +
-        `This creates: ${bits.join(", ")}. ${usesGithub ? "The slowest part is the runner setup; that wait is normal. " : ""}` +
-        `Then the Consort toolkit downloads on first use (~1-2 min, one-time). Progress:`,
+      `Setting up "${input.projectName}". This creates: ${bits.join(", ")}. ` +
+        `The Consort toolkit downloads on first use. Progress:`,
     );
   }
 
@@ -342,7 +340,7 @@ export async function createProject(
   }
 
   // ── Step 3: Lakebase project ──────────────────────────────────
-  report("Creating Lakebase database (provisioning Postgres, ~30-60s)...", lakebaseProjectId);
+  report("Creating Lakebase database (provisioning Postgres)...", lakebaseProjectId);
   await createLakebaseProject({ projectId: lakebaseProjectId, host });
 
   // From here on the Lakebase project EXISTS. If any later step throws, roll it
@@ -457,7 +455,7 @@ export async function createProject(
 
   // ── Step 7: Self-hosted runner (GitHub + self-hosted only) ────
   if (useGithub && runnerType === "self-hosted") {
-    report("Setting up the self-hosted CI runner (downloads + registers it, ~1-2 min , the slow step)...");
+    report("Setting up the self-hosted CI runner: downloading, extracting, and registering it...");
     try {
       await setupRunner({
         fullRepoName,
@@ -572,8 +570,8 @@ export async function createProject(
       }
     }
     report(
-      "Consort toolkit downloads on first use (one-time, ~1-2 min) , run `./scripts/lk --refresh`, " +
-        "or just your first `./scripts/lk` command, and it installs then; instant afterward.",
+      "The Consort toolkit downloads on first use , run `./scripts/lk --refresh`, " +
+        "or just your first `./scripts/lk` command, and it installs then.",
     );
   }
 
