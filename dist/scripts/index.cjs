@@ -88933,8 +88933,8 @@ var PKG_NAME = "@databricks-solutions/lakebase-scm-utils";
 var cached;
 function substrateSelfVersion() {
   if (cached !== void 0) return cached;
-  if ("0.2.50".length > 0) {
-    cached = "0.2.50";
+  if ("0.2.51".length > 0) {
+    cached = "0.2.51";
     return cached;
   }
   cached = "unknown";
@@ -92841,7 +92841,7 @@ async function createProject(input, progress) {
       tierCount > 1 ? `${tierCount} tiers (prod${tierCount >= 2 ? " + staging" : ""}${tierCount >= 3 ? " + dev" : ""})` : null
     ].filter(Boolean);
     report(
-      `Setting up "${input.projectName}" , one-time provisioning, usually ~2-4 min. This creates: ${bits.join(", ")}. ${usesGithub ? "The slowest part is the runner setup; that wait is normal. " : ""}Then the Consort toolkit downloads on first use (~1-2 min, one-time). Progress:`
+      `Setting up "${input.projectName}". This creates: ${bits.join(", ")}. The Consort toolkit downloads on first use. Progress:`
     );
   }
   report("Checking Databricks authentication...");
@@ -92896,7 +92896,7 @@ Last probe error:
     fs19.mkdirSync(projectDir, { recursive: true });
     await gitInit(projectDir);
   }
-  report("Creating Lakebase database (provisioning Postgres, ~30-60s)...", lakebaseProjectId);
+  report("Creating Lakebase database (provisioning Postgres)...", lakebaseProjectId);
   await createLakebaseProject({ projectId: lakebaseProjectId, host });
   return await withLakebaseRollback(
     { projectId: lakebaseProjectId, host, report },
@@ -92976,7 +92976,7 @@ Last probe error:
         }
       }
       if (useGithub && runnerType === "self-hosted") {
-        report("Setting up the self-hosted CI runner (downloads + registers it, ~1-2 min , the slow step)...");
+        report("Setting up the self-hosted CI runner: downloading, extracting, and registering it...");
         try {
           await setupRunner({
             fullRepoName,
@@ -93048,7 +93048,7 @@ Last probe error:
           }
         }
         report(
-          "Consort toolkit downloads on first use (one-time, ~1-2 min) , run `./scripts/lk --refresh`, or just your first `./scripts/lk` command, and it installs then; instant afterward."
+          "The Consort toolkit downloads on first use , run `./scripts/lk --refresh`, or just your first `./scripts/lk` command, and it installs then."
         );
       }
       const langLabels = {
