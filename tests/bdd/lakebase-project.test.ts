@@ -4,6 +4,7 @@ import {
   assertCreatedProjectReady,
   createLakebaseProject,
   deleteLakebaseProject,
+  deleteProjectArgs,
   findDefaultBranchName,
   getDefaultBranchId,
   getDefaultBranchName,
@@ -52,6 +53,16 @@ describe("lakebase-project – error wrapping", () => {
     const deleteFn: typeof deleteLakebaseProject = deleteLakebaseProject;
     expect(typeof createFn).toBe("function");
     expect(typeof deleteFn).toBe("function");
+  });
+
+  it("deleteProjectArgs: HARD delete (--purge) so the project name is freed, not tombstoned", () => {
+    const args = deleteProjectArgs("my-proj");
+    expect(args).toEqual(["postgres", "delete-project", "projects/my-proj", "--purge", "-o", "json"]);
+    // already-qualified id is not double-prefixed
+    expect(deleteProjectArgs("projects/my-proj")).toContain("projects/my-proj");
+    expect(deleteProjectArgs("projects/my-proj").filter((a) => a.startsWith("projects/"))).toHaveLength(1);
+    // the hard-delete flag is always present
+    expect(deleteProjectArgs("x")).toContain("--purge");
   });
 });
 

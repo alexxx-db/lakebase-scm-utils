@@ -123,12 +123,26 @@ export function assertCreatedProjectReady(
 }
 
 /**
- * Delete a Lakebase project via `databricks postgres delete-project`.
+ * Build the `databricks postgres delete-project` argv for a HARD delete.
+ *
+ * `--purge` permanently removes the project so its name is freed IMMEDIATELY. A plain
+ * (soft) delete leaves a `delete_time` tombstone that keeps the slug RESERVED, which later
+ * blocks re-creating a project of the same name (the exact footgun setup.sh works around by
+ * treating a tombstoned get-project as "not existing"). Every caller is a teardown/cleanup
+ * context (scaffold teardown, orphan sweep, live-test cleanup), so a hard delete is correct.
+ * Pure (no I/O) so it is unit-testable without the destructive CLI call.
+ */
+export function deleteProjectArgs(projectId: string): string[] {
+  const name = projectId.startsWith("projects/") ? projectId : `projects/${projectId}`;
+  return ["postgres", "delete-project", name, "--purge", "-o", "json"];
+}
+
+/**
+ * Delete a Lakebase project via `databricks postgres delete-project --purge` (HARD delete).
  * Long-running on the server side; the CLI waits for completion.
  */
 export async function deleteLakebaseProject(args: LakebaseProjectArgs): Promise<void> {
-  const name = args.projectId.startsWith("projects/") ? args.projectId : `projects/${args.projectId}`;
-  await dbcli(["postgres", "delete-project", name, "-o", "json"], args.host);
+  await dbcli(deleteProjectArgs(args.projectId), args.host);
 }
 
 /**
