@@ -2210,9 +2210,12 @@ function assertCreatedProjectReady(projectId, verified, reportedState) {
   }
   return { uid: verified.uid, name: verified.name, state: verified.state ?? "READY" };
 }
+function deleteProjectArgs(projectId) {
+  const name = projectId.startsWith("projects/") ? projectId : `projects/${projectId}`;
+  return ["postgres", "delete-project", name, "--purge", "-o", "json"];
+}
 async function deleteLakebaseProject(args) {
-  const name = args.projectId.startsWith("projects/") ? args.projectId : `projects/${args.projectId}`;
-  await dbcli2(["postgres", "delete-project", name, "-o", "json"], args.host);
+  await dbcli2(deleteProjectArgs(args.projectId), args.host);
 }
 function findDefaultBranchName(items) {
   const def = items.find((b) => b.status?.default === true || b.is_default === true);
@@ -2518,8 +2521,8 @@ var PKG_NAME = "@databricks-solutions/lakebase-scm-utils";
 var cached;
 function substrateSelfVersion() {
   if (cached !== void 0) return cached;
-  if ("0.2.49".length > 0) {
-    cached = "0.2.49";
+  if ("0.2.50".length > 0) {
+    cached = "0.2.50";
     return cached;
   }
   cached = "unknown";
@@ -18019,6 +18022,7 @@ export {
   deleteBranch,
   deleteLakebaseProject,
   deletePairedBranch,
+  deleteProjectArgs,
   deployClaudeAgents,
   deployClaudeCommands,
   deployClaudeSettings,

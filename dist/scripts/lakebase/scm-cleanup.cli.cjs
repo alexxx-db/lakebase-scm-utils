@@ -431,9 +431,12 @@ function dbcli2(args, host) {
 }
 
 // scripts/lakebase/lakebase-project.ts
+function deleteProjectArgs(projectId) {
+  const name = projectId.startsWith("projects/") ? projectId : `projects/${projectId}`;
+  return ["postgres", "delete-project", name, "--purge", "-o", "json"];
+}
 async function deleteLakebaseProject(args) {
-  const name = args.projectId.startsWith("projects/") ? args.projectId : `projects/${args.projectId}`;
-  await dbcli3(["postgres", "delete-project", name, "-o", "json"], args.host);
+  await dbcli3(deleteProjectArgs(args.projectId), args.host);
 }
 function dbcli3(args, host, timeout = KIT_TIMEOUTS.cliDefault) {
   return runDatabricks(args, { host, timeout });
