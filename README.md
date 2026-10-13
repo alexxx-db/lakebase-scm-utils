@@ -34,16 +34,22 @@ the IDE extension and the Consort kit can depend on a single, versioned engine, 
 consumption and portability. The Consort orchestration stays in `consort` and
 depends back on this package.
 
+## Scaffolded languages
+
+The scaffold + migration primitives support **Java** and **Kotlin** (Spring Boot / JPA, Flyway),
+**Python** (FastAPI / SQLAlchemy, Alembic), **Node.js** (Express / Knex), and **.NET** (ASP.NET Core /
+EF Core on Npgsql, with EF Core migrations or Flyway).
+
 ## Install
 
-Consumed via a github ref (npm publish is deferred):
+Published to npm; consumers pin an exact version:
 
 ```
-npm install github:databricks-solutions/lakebase-scm-utils#v<version>
+npm install @databricks-solutions/lakebase-scm-utils@<version>
 ```
 
-The package ships a pre-built `dist/` on every tagged release, so a consumer install skips
-the build.
+(A GitHub ref also works: `npm install github:databricks-solutions/lakebase-scm-utils#v<version>`.)
+The package ships a pre-built `dist/` on every tagged release, so a consumer install skips the build.
 
 ## Development
 
