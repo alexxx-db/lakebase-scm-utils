@@ -1845,6 +1845,8 @@ interface ScaffoldStaticAllArgs extends ScaffoldOptions {
     databricksHost?: string;
     lakebaseProjectId?: string;
     language?: ProjectLanguage;
+    /** .NET only: "efcore" (default) or "flyway". Ignored for other languages. */
+    migrationTool?: DotnetMigrationTool;
     runnerType?: RunnerType;
     report?: ScaffoldReportFn;
     /**
@@ -1962,7 +1964,9 @@ interface DeploySpringStarterArgs {
  */
 declare function deploySpringStarter(args: DeploySpringStarterArgs): Promise<void>;
 
-type ProjectLanguage = "java" | "kotlin" | "python" | "nodejs";
+type ProjectLanguage = "java" | "kotlin" | "python" | "nodejs" | "dotnet";
+/** Migration tool for a .NET project. EF Core is the default. */
+type DotnetMigrationTool = "efcore" | "flyway";
 /**
  * The frontend the project ships. "react" scaffolds the first-class SPA client
  * under `client/` (templates/project/client); "none" leaves the boundary to
@@ -1975,6 +1979,8 @@ interface DeployLanguageProjectArgs {
     targetDir: string;
     language: ProjectLanguage;
     projectName?: string;
+    /** .NET only: which migration tool the scaffold is set up for (default "efcore"). */
+    migrationTool?: DotnetMigrationTool;
     /** Override templates dir (tests). */
     templatesDir?: string;
     /** Override Initializr client (tests). */
@@ -1998,7 +2004,7 @@ interface ConsortSetupHooks {
         agentModels?: Record<string, string>;
         uiTrack?: boolean;
         clientFramework?: string;
-        language?: "java" | "kotlin" | "python" | "nodejs";
+        language?: "java" | "kotlin" | "python" | "nodejs" | "dotnet";
     }): void;
 }
 /** @deprecated renamed to {@link ConsortSetupHooks}. Kept as a structural alias
@@ -2018,7 +2024,9 @@ interface CreateProjectArgs {
     /** Whether to make the GitHub repo private (default: true). */
     privateRepo?: boolean;
     /** Project language stack (default: 'java'). */
-    language?: "java" | "kotlin" | "python" | "nodejs";
+    language?: "java" | "kotlin" | "python" | "nodejs" | "dotnet";
+    /** .NET only: migration tool, "efcore" (default) or "flyway". */
+    migrationTool?: "efcore" | "flyway";
     /** CI runner type (default: 'self-hosted'). */
     runnerType?: "self-hosted" | "github-hosted";
     /**
@@ -3979,7 +3987,7 @@ declare function catalogExplorerUrl(workspaceHost: string): string;
 /** Languages the kit knows how to detect. `unknown` maps to the Flyway
  *  defaults (the historical fallback) so callers never crash on an
  *  unrecognized layout. */
-type MigrationLanguage = "java" | "kotlin" | "python" | "nodejs" | "unknown";
+type MigrationLanguage = "java" | "kotlin" | "python" | "nodejs" | "dotnet" | "unknown";
 interface MigrationDefaults {
     /** Default migration directory, relative to the project root. */
     path: string;
@@ -4012,6 +4020,8 @@ declare function resolveMigrationLanguage(projectDir?: string, configuredMigrati
  * language default rather than throwing on a bad setting.
  */
 declare function compileMigrationPattern(src?: string): RegExp | undefined;
+/** EF Core: Migrations/<timestamp>_<Name>.cs, excluding *.Designer.cs and the model snapshot. */
+declare const DOTNET_EFCORE_DEFAULTS: MigrationDefaults;
 interface ResolveMigrationLayoutArgs {
     /** Project root. */
     projectDir?: string;
@@ -4040,15 +4050,49 @@ interface MigrationLayout {
  */
 declare function resolveMigrationLayout(args: ResolveMigrationLayoutArgs): MigrationLayout;
 
-type SchemaMigrationLanguage = "java" | "kotlin" | "python" | "nodejs";
-type SchemaMigrationToolName = "flyway" | "alembic" | "knex";
+/** Package whose reference marks a project as the EF Core migrations owner. */
+declare const EF_DESIGN_PACKAGE = "Microsoft.EntityFrameworkCore.Design";
+/** Flyway migrations directory for .NET projects (relative to the project root). */
+declare const DOTNET_FLYWAY_DIR: string;
+/** True when `dir` itself carries a .NET marker (*.sln, *.slnx, *.csproj). */
+declare function hasDotnetMarker(dir: string): boolean;
+/**
+ * Find *.csproj files at the root and up to two directory levels below it,
+ * skipping build output and test folders. Sorted for deterministic results.
+ */
+declare function findCsprojFiles(projectDir: string): string[];
+interface EfCoreProject {
+    /** Absolute path to the .csproj that references EF Core Design. */
+    csproj: string;
+    /** Directory containing the .csproj. */
+    projectDir: string;
+    /** Absolute path to the project's Migrations/ directory (may not exist yet). */
+    migrationsDir: string;
+}
+/** Locate the project that owns EF Core migrations, or null. */
+declare function findEfCoreProject(projectDir: string): EfCoreProject | null;
+/** True for a .NET repo: a *.sln / *.slnx / *.csproj at the root. */
+declare function isDotnetProject(projectDir: string): boolean;
+/** True for a .NET repo that uses Flyway SQL migrations under db/migrations/. */
+declare function isDotnetFlywayProject(projectDir: string): boolean;
+/** Maven/Spring Flyway layout (Java/Kotlin). */
+declare const MAVEN_FLYWAY_DIR: string;
+/**
+ * Absolute Flyway migrations directory for a project: the Maven layout for
+ * Java/Kotlin (and as the historical default), or `db/migrations` for a .NET
+ * project that uses Flyway.
+ */
+declare function flywayMigrationsDir(projectDir: string): string;
+
+type SchemaMigrationLanguage = "java" | "kotlin" | "python" | "nodejs" | "dotnet";
+type SchemaMigrationToolName = "flyway" | "alembic" | "knex" | "efcore";
 interface SchemaMigrationFile {
     /** Stable identifier sortable in apply-order: Flyway `V<n>`, Alembic
      *  revision hash, Knex timestamp prefix. */
     version: string;
     filename: string;
     description: string;
-    type: "SQL" | "Python" | "JavaScript" | "TypeScript";
+    type: "SQL" | "Python" | "JavaScript" | "TypeScript" | "CSharp";
     /** Tool that should run this file. */
     tool: SchemaMigrationToolName;
 }
@@ -4126,8 +4170,13 @@ declare class SchemaMigrationError extends Error {
  *  detection in templates/project/common/scripts/flyway-migrate.sh so the
  *  kit primitive and the bundled hook agree on which tool to run. */
 declare function detectLanguage(projectDir: string): SchemaMigrationLanguage;
-/** Map a language to the migration tool the kit invokes for it. */
-declare function toolForLanguage(language: SchemaMigrationLanguage): SchemaMigrationToolName;
+/**
+ * Map a language to the migration tool the kit invokes for it. .NET supports
+ * two tools, so it also needs the project directory: EF Core when a project
+ * references Microsoft.EntityFrameworkCore.Design, Flyway when SQL migrations
+ * live in db/migrations/ (Flyway wins when both are present), else EF Core.
+ */
+declare function toolForLanguage(language: SchemaMigrationLanguage, projectDir?: string): SchemaMigrationToolName;
 /** Enumerate migration files in a project. No DB connection required.
  *  Order is apply-order (V1, V2, ... for Flyway; chronological for Alembic
  *  via alembic.ini-resolved order; timestamp-ascending for Knex). */
@@ -4136,4 +4185,4 @@ declare function applySchemaMigrations(args: ApplySchemaMigrationsArgs): Promise
 declare function rollbackSchemaMigration(args: RollbackSchemaMigrationArgs): Promise<RollbackSchemaMigrationResult>;
 declare function schemaMigrationStatus(args: SchemaMigrationStatusArgs): Promise<SchemaMigrationStatusResult>;
 
-export { type AbandonFeatureArgs, type AbandonFeatureResult, type AddE2eToRunTestsScriptArgs, type AddE2eToRunTestsScriptResult, type AddInfraToPackageJsonArgs, type AddInfraToPackageJsonResult, type AddInfraToRunTestsScriptArgs, type AddInfraToRunTestsScriptResult, type AddPlaywrightToPackageJsonArgs, type AddPlaywrightToPackageJsonResult, type AddPythonE2eDepsArgs, type AddPythonE2eDepsResult, type AdoptLakebaseProjectArgs, type AdoptLakebaseProjectResult, type AdoptStateArgs, type AdoptStateResult, type AppServicePrincipal, type AppliedSchemaMigration, type ApplySchemaMigrationsArgs, type ApplySchemaMigrationsResult, type BranchLookupOpts, type BranchMetadata, CONVENTION_TIER_DEFAULTS, type CatalogExistsArgs, type CheckoutMode, type CheckoutPairedArgs, type CheckoutPairedResult, type ClaimFeatureBranchArgs, type ClaimFeatureBranchResult, type ClaimedOrphan, type ClientFramework, type CommandDriftReport, type CommandFileEntry, type CommandFileStatus, type ConnectionArgs, type ConsortSetupHooks, type CreateBranchArgs, type CreateConventionBranchArgs, type CreateConventionPairedBranchArgs, type CreateLongRunningBranchArgs, type CreateLongRunningBranchResult, type CreatePairedBranchArgs, type CreatePairedBranchResult, type CreateProjectArgs, type CreateProjectResult, type CutBackupArgs, type CutBackupResult, DEFAULT_PROTECTED_TIER_NAMES, type DatabricksProfile, type DeleteAppEndpointArgs, type DeleteAppEndpointResult, type DeleteBranchArgs, type DeletePairedBranchArgs, type DeletePairedBranchResult, type DeployClaudeCommandsOptions, type DeployClaudeCommandsResult, type DeployEnvExampleArgs, type DeployLanguageProjectArgs, type DeploySpringStarterArgs, type DeployTarget, type DeployTargetsConfig, type DetectCommandDriftArgs, type DetectScaffoldedDriftArgs, type DetectWorkflowDriftArgs, type DoctorArgs$1 as DoctorArgs, type DoctorFinding, type DoctorReport$1 as DoctorReport, type DoctorSeverity, type DsnArgs, type DsnResult, type EnableE2eForProjectArgs, type EnableE2eForProjectResult, type EnableInfraForProjectArgs, type EnableInfraForProjectResult, type EndpointInfo, type EnsureAppEndpointArgs, type EnsureAppEndpointResult, type EnsureEndpointArgs, type EnsureLakebaseSecretAuthArgs, type EnsureLakebaseSecretAuthResult, type EnsureProfilePinnedArgs, type EnsureProfilePinnedResult, type EnsureSchemaAndVolumeArgs, type EnsureSchemaAndVolumeResult, FIXABLE_FINDING_IDS, type FixFindingArgs, type FixFindingResult, type FixableFindingId, type GateInvariant, type GateStatus, type GenerateAppYamlOptions, type GenerateMavenProjectOptions, type GetAppEndpointArgs, type GetAppEndpointResult, type GetAppServicePrincipalArgs, type GetCiAppEndpointArgs, type GetCiAppEndpointResult, type GetConnectionArgs, type GetCredentialArgs, type GetEndpointArgs, type GetSchemaDiffArgs, type GrantLakebasePermissionArgs, type GrantLakebasePermissionResult, type GrantUcCatalogPermissionArgs, type GrantUcCatalogPermissionResult, type DoctorReport as HealthDoctorReport, type HookVerification, type InfraCheckResult, type InfraSuiteResult, type InitWorkflowStateArgs, type InitializrMetadata, InitializrNetworkError, InitializrParseError, type InstallPlaywrightArgs, type InstallPlaywrightOptions, type InstallPlaywrightResult, LakebaseBranchError, type LakebaseBranchInfo, LakebaseBranchTtlTooLongError, type LakebasePermissionLevel, type LakebaseProjectArgs, LakebaseProjectError, type LakebaseProjectInfo, type LakebaseProjectMetadata, type ListSchemaMigrationsArgs, MIGRATION_DEFAULTS, type MergeArgs, type MergePairedArgs, type MergePairedResult, type MergeResult, type MigrationDefaults, type MigrationLanguage, type MigrationLayout, type ModifiedSchemaObject, NODE_E2E_TEMPLATE_FILES, type OrphanCandidate, PLAYWRIGHT_TEMPLATE_FILES, PLAYWRIGHT_TEST_VERSION_RANGE, PYTEST_BDD_VERSION_RANGE, PYTEST_PLAYWRIGHT_VERSION_RANGE, PYTHON_E2E_TEMPLATE_FILES, type PendingSchemaMigration, type PoolArgs, type PreflightResult, type PreparePrArgs, type PreparePrResult, type ProgressCallback, type ProjectLanguage, type PropagateCredentialsArgs, type PropagateCredentialsResult, ProtectedBranchCommitError, type QueryBranchSchemaArgs, type RecoverOrphansArgs, type RecoverOrphansResult, type ReleaseArgs, type ReleaseResult, type RemoveRunnerArgs, type ResolveDatabricksHostArgs, type ResolveMigrationLayoutArgs, type RollbackDeployArgs, type RollbackDeployResult, type RollbackOptions, type RollbackSchemaMigrationArgs, type RollbackSchemaMigrationResult, type RunDoctorDeps, type RunInfraSuiteArgs, type RunPlaywrightInstallArgs, type RunPlaywrightInstallResult, type RunnerInfo, type RunnerReportFn, type RunnerType, SCM_STATES, STATE_FILE_REL, type ScaffoldAllArgs, type ScaffoldOptions, type ScaffoldReportFn, type ScaffoldStaticAllArgs, type ScaffoldStaticAllResult, type ScaffoldedDriftReport, type SchemaColumn, type SchemaDiffResult, SchemaMigrationError, type SchemaMigrationFile, type SchemaMigrationLanguage, type SchemaMigrationStatusArgs, type SchemaMigrationStatusResult, type SchemaMigrationToolName, type SchemaObject, type SchemaQueryRow, ScmAbandonError, ScmAdoptError, ScmClaimError, ScmDoctorFixError, ScmMergeError, ScmPreparePrError, ScmRecoverError, type ScmState, ScmWaitCiError, type ScmWorkflowState, type SetupRunnerArgs, type SftddSetupHooks, SpringInitializrClient, type SpringJvmLanguage, type StaleBranchFinding, type SyncEnvArgs, type SyncEnvResult, type TableSchema, type TierTopology, type TryCreateCatalogArgs, type TryCreateCatalogResult, type UcCatalogPermission, type UpdateEnvConnectionArgs, type UpdateWorkflowsArgs, type UpdateWorkflowsResult, type UploadDirectoryArgs, type UploadDirectoryResult, type ValidateAppOptions, type ValidateAppResult, type ValidationError, type ValidationResult, type WaitCiArgs, type WaitCiResult, type WaitForBranchAuthReadyArgs, type WaitForBranchReadyArgs, type WorkflowDriftReport, type WorkflowFileStatus, type WorkflowFileUpdate, type WorkflowStatus, type WorkflowUpdateOutcome, type WorkflowVerification, type WriteEnvFileArgs, type WritePlaywrightTemplatesArgs, type WritePlaywrightTemplatesResult, _testMakeBrownfieldFixture, abandonFeatureBranch, addE2eToRunTestsScript, addInfraToPackageJson, addInfraToRunTestsScript, addPlaywrightToPackageJson, adoptLakebaseProject, adoptScmState, applySchemaMigrations, assertAdoptionPreflight, assertCleanForFork, assertCommitTargetNotProtected, assertCreatedProjectReady, buildPostgresUrl, buildSchemaQuery, cacheProjectRetention, catalogExists, catalogExplorerUrl, checkDatabricksAuth, checkoutPaired, claimFeatureBranch, clearRetentionCache, compileMigrationPattern, connectionApplicationName, createBranch, createFeaturePairedBranch, createLakebaseProject, createLongRunningBranch, createPairedBranch, createPerfPairedBranch, createProject, createTestPairedBranch, createUatPairedBranch, cutBackup, databricksAuthPrereqMessage, defaultRefreshPromoteWorkflows, deleteAppEndpoint, deleteBranch, deleteLakebaseProject, deletePairedBranch, deleteProjectArgs, deployClaudeAgents, deployClaudeCommands, deployClaudeSettings, deployClaudeSkills, deployClientProject, deployDeployTargets, deployEnv, deployEnvExample, deployGitignore, deployLanguageProject, deployScripts, deploySpringStarter, deployVscodeSettings, deployWorkflows, deriveCiAppName, describeGates, detectCommandDrift, detectLanguage, detectLanguageAt, detectScaffoldedDrift, detectWorkflowDrift, dirIsEmpty, enableE2eForProject, enableInfraForProject, endpointPath, ensureAppEndpoint, ensureCachedArchive, ensureEndpoint, ensureLakebaseSecretAuth, ensureProfilePinned, ensurePythonBddDeps, ensurePythonE2eDeps, ensureSchemaAndVolume, extractPullNumber, featureBranchName, findDefaultBranchName, findHistoryRetentionDuration, fixFinding, formatJUnit, formatSchemaDiffAsMarkdown, generateAppYaml, getAppEndpoint, getAppServicePrincipal, getBranchByName, getCachedProjectRetention, getCiAppEndpoint, getConnection, getCredential, getDefaultBranch, getDefaultBranchId, getDefaultBranchName, getEndpoint, getProjectInfo, getProjectRetentionDuration, getRunnerInfo, getSchemaDiff, getTargetNames, grantLakebasePermission, grantUcCatalogPermission, inferTierTopology, initWorkflowState, installHooks, installPlaywright, isAllSchemas, isForeignFeatureClaim, isGitTracked, isLongRunningTierBranch, isLtsJavaVersion, isPrereleaseBootVersion, isRunning, isTier, isTtlTooLongError, kitWarmWarning, listAppDeployments, listBranches, listSchemaMigrations, mergeFeature, mergePaired, minLakebaseTtl, mintCredential, normalizeHost, normalizeTierName, parseHostFromAuthDescribe, parseLakebaseTtl, parseTargetsYaml, patchWorkflowsForRunnerType, preparePr, projectPath, propagateCredentials, protectedTierNamesFromEnv, pushFailureHint, queryBranchSchema, queryBranchTables, readEnvVar, readTargets, readWorkflowState, reconcilePromoteRunState, reconcileTierToOrigin, recoverOrphans, release, removeRunner, resolveBranchId, resolveBranchPath, resolveCurrentUser, resolveDatabricksHost, resolveEndpointHost, resolveFeatureStartPoint, resolveJavaHome, resolveLatestBootVersion, resolveLatestLtsJavaVersion, resolveMigrationLanguage, resolveMigrationLayout, resolveParentBranch, resolveProfileForHost, resolveProfileForHostSync, resolveProtectedTierNames, rollbackDeploy, rollbackSchemaMigration, runDoctor$1 as runDoctor, runDoctor as runHealthDoctor, runInfraSuite, runPlaywrightInstall, runnerDir, runnerName, sanitizeFeatureSlug, scaffoldAll, scaffoldStaticAll, schemaMigrationStatus, schemaObjectName, selectProfileForHost, setupRunner, stateFilePath, stopRunner, substituteScmUtilsVersion, substrateVersion, syncEnvToCurrentBranch, tierBranchNames, toolForLanguage, tryCreateCatalog, updateEnvConnection, updateWorkflows, uploadDirectory, validateApp, validateCreateInputs, validateWorkflowState, verifyHooks, verifyProject, verifyWorkflows, waitForBranchAuthReady, waitForBranchReady, waitForCi, warmAndVerifyKit, withLakebaseRollback, workflowStateFileExists, writeEnvFile, writePlaywrightTemplates, writeTargets, writeWorkflowState };
+export { type AbandonFeatureArgs, type AbandonFeatureResult, type AddE2eToRunTestsScriptArgs, type AddE2eToRunTestsScriptResult, type AddInfraToPackageJsonArgs, type AddInfraToPackageJsonResult, type AddInfraToRunTestsScriptArgs, type AddInfraToRunTestsScriptResult, type AddPlaywrightToPackageJsonArgs, type AddPlaywrightToPackageJsonResult, type AddPythonE2eDepsArgs, type AddPythonE2eDepsResult, type AdoptLakebaseProjectArgs, type AdoptLakebaseProjectResult, type AdoptStateArgs, type AdoptStateResult, type AppServicePrincipal, type AppliedSchemaMigration, type ApplySchemaMigrationsArgs, type ApplySchemaMigrationsResult, type BranchLookupOpts, type BranchMetadata, CONVENTION_TIER_DEFAULTS, type CatalogExistsArgs, type CheckoutMode, type CheckoutPairedArgs, type CheckoutPairedResult, type ClaimFeatureBranchArgs, type ClaimFeatureBranchResult, type ClaimedOrphan, type ClientFramework, type CommandDriftReport, type CommandFileEntry, type CommandFileStatus, type ConnectionArgs, type ConsortSetupHooks, type CreateBranchArgs, type CreateConventionBranchArgs, type CreateConventionPairedBranchArgs, type CreateLongRunningBranchArgs, type CreateLongRunningBranchResult, type CreatePairedBranchArgs, type CreatePairedBranchResult, type CreateProjectArgs, type CreateProjectResult, type CutBackupArgs, type CutBackupResult, DEFAULT_PROTECTED_TIER_NAMES, DOTNET_EFCORE_DEFAULTS, DOTNET_FLYWAY_DIR, type DatabricksProfile, type DeleteAppEndpointArgs, type DeleteAppEndpointResult, type DeleteBranchArgs, type DeletePairedBranchArgs, type DeletePairedBranchResult, type DeployClaudeCommandsOptions, type DeployClaudeCommandsResult, type DeployEnvExampleArgs, type DeployLanguageProjectArgs, type DeploySpringStarterArgs, type DeployTarget, type DeployTargetsConfig, type DetectCommandDriftArgs, type DetectScaffoldedDriftArgs, type DetectWorkflowDriftArgs, type DoctorArgs$1 as DoctorArgs, type DoctorFinding, type DoctorReport$1 as DoctorReport, type DoctorSeverity, type DotnetMigrationTool, type DsnArgs, type DsnResult, EF_DESIGN_PACKAGE, type EfCoreProject, type EnableE2eForProjectArgs, type EnableE2eForProjectResult, type EnableInfraForProjectArgs, type EnableInfraForProjectResult, type EndpointInfo, type EnsureAppEndpointArgs, type EnsureAppEndpointResult, type EnsureEndpointArgs, type EnsureLakebaseSecretAuthArgs, type EnsureLakebaseSecretAuthResult, type EnsureProfilePinnedArgs, type EnsureProfilePinnedResult, type EnsureSchemaAndVolumeArgs, type EnsureSchemaAndVolumeResult, FIXABLE_FINDING_IDS, type FixFindingArgs, type FixFindingResult, type FixableFindingId, type GateInvariant, type GateStatus, type GenerateAppYamlOptions, type GenerateMavenProjectOptions, type GetAppEndpointArgs, type GetAppEndpointResult, type GetAppServicePrincipalArgs, type GetCiAppEndpointArgs, type GetCiAppEndpointResult, type GetConnectionArgs, type GetCredentialArgs, type GetEndpointArgs, type GetSchemaDiffArgs, type GrantLakebasePermissionArgs, type GrantLakebasePermissionResult, type GrantUcCatalogPermissionArgs, type GrantUcCatalogPermissionResult, type DoctorReport as HealthDoctorReport, type HookVerification, type InfraCheckResult, type InfraSuiteResult, type InitWorkflowStateArgs, type InitializrMetadata, InitializrNetworkError, InitializrParseError, type InstallPlaywrightArgs, type InstallPlaywrightOptions, type InstallPlaywrightResult, LakebaseBranchError, type LakebaseBranchInfo, LakebaseBranchTtlTooLongError, type LakebasePermissionLevel, type LakebaseProjectArgs, LakebaseProjectError, type LakebaseProjectInfo, type LakebaseProjectMetadata, type ListSchemaMigrationsArgs, MAVEN_FLYWAY_DIR, MIGRATION_DEFAULTS, type MergeArgs, type MergePairedArgs, type MergePairedResult, type MergeResult, type MigrationDefaults, type MigrationLanguage, type MigrationLayout, type ModifiedSchemaObject, NODE_E2E_TEMPLATE_FILES, type OrphanCandidate, PLAYWRIGHT_TEMPLATE_FILES, PLAYWRIGHT_TEST_VERSION_RANGE, PYTEST_BDD_VERSION_RANGE, PYTEST_PLAYWRIGHT_VERSION_RANGE, PYTHON_E2E_TEMPLATE_FILES, type PendingSchemaMigration, type PoolArgs, type PreflightResult, type PreparePrArgs, type PreparePrResult, type ProgressCallback, type ProjectLanguage, type PropagateCredentialsArgs, type PropagateCredentialsResult, ProtectedBranchCommitError, type QueryBranchSchemaArgs, type RecoverOrphansArgs, type RecoverOrphansResult, type ReleaseArgs, type ReleaseResult, type RemoveRunnerArgs, type ResolveDatabricksHostArgs, type ResolveMigrationLayoutArgs, type RollbackDeployArgs, type RollbackDeployResult, type RollbackOptions, type RollbackSchemaMigrationArgs, type RollbackSchemaMigrationResult, type RunDoctorDeps, type RunInfraSuiteArgs, type RunPlaywrightInstallArgs, type RunPlaywrightInstallResult, type RunnerInfo, type RunnerReportFn, type RunnerType, SCM_STATES, STATE_FILE_REL, type ScaffoldAllArgs, type ScaffoldOptions, type ScaffoldReportFn, type ScaffoldStaticAllArgs, type ScaffoldStaticAllResult, type ScaffoldedDriftReport, type SchemaColumn, type SchemaDiffResult, SchemaMigrationError, type SchemaMigrationFile, type SchemaMigrationLanguage, type SchemaMigrationStatusArgs, type SchemaMigrationStatusResult, type SchemaMigrationToolName, type SchemaObject, type SchemaQueryRow, ScmAbandonError, ScmAdoptError, ScmClaimError, ScmDoctorFixError, ScmMergeError, ScmPreparePrError, ScmRecoverError, type ScmState, ScmWaitCiError, type ScmWorkflowState, type SetupRunnerArgs, type SftddSetupHooks, SpringInitializrClient, type SpringJvmLanguage, type StaleBranchFinding, type SyncEnvArgs, type SyncEnvResult, type TableSchema, type TierTopology, type TryCreateCatalogArgs, type TryCreateCatalogResult, type UcCatalogPermission, type UpdateEnvConnectionArgs, type UpdateWorkflowsArgs, type UpdateWorkflowsResult, type UploadDirectoryArgs, type UploadDirectoryResult, type ValidateAppOptions, type ValidateAppResult, type ValidationError, type ValidationResult, type WaitCiArgs, type WaitCiResult, type WaitForBranchAuthReadyArgs, type WaitForBranchReadyArgs, type WorkflowDriftReport, type WorkflowFileStatus, type WorkflowFileUpdate, type WorkflowStatus, type WorkflowUpdateOutcome, type WorkflowVerification, type WriteEnvFileArgs, type WritePlaywrightTemplatesArgs, type WritePlaywrightTemplatesResult, _testMakeBrownfieldFixture, abandonFeatureBranch, addE2eToRunTestsScript, addInfraToPackageJson, addInfraToRunTestsScript, addPlaywrightToPackageJson, adoptLakebaseProject, adoptScmState, applySchemaMigrations, assertAdoptionPreflight, assertCleanForFork, assertCommitTargetNotProtected, assertCreatedProjectReady, buildPostgresUrl, buildSchemaQuery, cacheProjectRetention, catalogExists, catalogExplorerUrl, checkDatabricksAuth, checkoutPaired, claimFeatureBranch, clearRetentionCache, compileMigrationPattern, connectionApplicationName, createBranch, createFeaturePairedBranch, createLakebaseProject, createLongRunningBranch, createPairedBranch, createPerfPairedBranch, createProject, createTestPairedBranch, createUatPairedBranch, cutBackup, databricksAuthPrereqMessage, defaultRefreshPromoteWorkflows, deleteAppEndpoint, deleteBranch, deleteLakebaseProject, deletePairedBranch, deleteProjectArgs, deployClaudeAgents, deployClaudeCommands, deployClaudeSettings, deployClaudeSkills, deployClientProject, deployDeployTargets, deployEnv, deployEnvExample, deployGitignore, deployLanguageProject, deployScripts, deploySpringStarter, deployVscodeSettings, deployWorkflows, deriveCiAppName, describeGates, detectCommandDrift, detectLanguage, detectLanguageAt, detectScaffoldedDrift, detectWorkflowDrift, dirIsEmpty, enableE2eForProject, enableInfraForProject, endpointPath, ensureAppEndpoint, ensureCachedArchive, ensureEndpoint, ensureLakebaseSecretAuth, ensureProfilePinned, ensurePythonBddDeps, ensurePythonE2eDeps, ensureSchemaAndVolume, extractPullNumber, featureBranchName, findCsprojFiles, findDefaultBranchName, findEfCoreProject, findHistoryRetentionDuration, fixFinding, flywayMigrationsDir, formatJUnit, formatSchemaDiffAsMarkdown, generateAppYaml, getAppEndpoint, getAppServicePrincipal, getBranchByName, getCachedProjectRetention, getCiAppEndpoint, getConnection, getCredential, getDefaultBranch, getDefaultBranchId, getDefaultBranchName, getEndpoint, getProjectInfo, getProjectRetentionDuration, getRunnerInfo, getSchemaDiff, getTargetNames, grantLakebasePermission, grantUcCatalogPermission, hasDotnetMarker, inferTierTopology, initWorkflowState, installHooks, installPlaywright, isAllSchemas, isDotnetFlywayProject, isDotnetProject, isForeignFeatureClaim, isGitTracked, isLongRunningTierBranch, isLtsJavaVersion, isPrereleaseBootVersion, isRunning, isTier, isTtlTooLongError, kitWarmWarning, listAppDeployments, listBranches, listSchemaMigrations, mergeFeature, mergePaired, minLakebaseTtl, mintCredential, normalizeHost, normalizeTierName, parseHostFromAuthDescribe, parseLakebaseTtl, parseTargetsYaml, patchWorkflowsForRunnerType, preparePr, projectPath, propagateCredentials, protectedTierNamesFromEnv, pushFailureHint, queryBranchSchema, queryBranchTables, readEnvVar, readTargets, readWorkflowState, reconcilePromoteRunState, reconcileTierToOrigin, recoverOrphans, release, removeRunner, resolveBranchId, resolveBranchPath, resolveCurrentUser, resolveDatabricksHost, resolveEndpointHost, resolveFeatureStartPoint, resolveJavaHome, resolveLatestBootVersion, resolveLatestLtsJavaVersion, resolveMigrationLanguage, resolveMigrationLayout, resolveParentBranch, resolveProfileForHost, resolveProfileForHostSync, resolveProtectedTierNames, rollbackDeploy, rollbackSchemaMigration, runDoctor$1 as runDoctor, runDoctor as runHealthDoctor, runInfraSuite, runPlaywrightInstall, runnerDir, runnerName, sanitizeFeatureSlug, scaffoldAll, scaffoldStaticAll, schemaMigrationStatus, schemaObjectName, selectProfileForHost, setupRunner, stateFilePath, stopRunner, substituteScmUtilsVersion, substrateVersion, syncEnvToCurrentBranch, tierBranchNames, toolForLanguage, tryCreateCatalog, updateEnvConnection, updateWorkflows, uploadDirectory, validateApp, validateCreateInputs, validateWorkflowState, verifyHooks, verifyProject, verifyWorkflows, waitForBranchAuthReady, waitForBranchReady, waitForCi, warmAndVerifyKit, withLakebaseRollback, workflowStateFileExists, writeEnvFile, writePlaywrightTemplates, writeTargets, writeWorkflowState };

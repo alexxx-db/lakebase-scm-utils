@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 // scripts/lakebase/doctor.cli.ts
-import * as path14 from "path";
+import * as path17 from "path";
 
 // scripts/lakebase/doctor.ts
-import * as fs13 from "fs";
-import * as path13 from "path";
+import * as fs15 from "fs";
+import * as path16 from "path";
 import * as cp2 from "child_process";
 
 // scripts/util/exec.ts
@@ -351,9 +351,9 @@ function asBranchUid(s) {
   }
   return s;
 }
-function branchNameFromResourcePath(path15) {
-  if (!path15.includes("/branches/")) return null;
-  const leaf = path15.split("/branches/").pop();
+function branchNameFromResourcePath(path18) {
+  if (!path18.includes("/branches/")) return null;
+  const leaf = path18.split("/branches/").pop();
   if (!leaf) return null;
   try {
     return asBranchName(leaf);
@@ -460,8 +460,8 @@ function verifyHooks(projectDir) {
 }
 
 // scripts/lakebase/schema-migrate.ts
-import * as fs11 from "fs";
-import * as path11 from "path";
+import * as fs13 from "fs";
+import * as path14 from "path";
 
 // scripts/lakebase/get-connection.ts
 import { createLakebasePool } from "@databricks/lakebase";
@@ -484,8 +484,8 @@ var PKG_NAME = "@databricks-solutions/lakebase-scm-utils";
 var cached;
 function substrateSelfVersion() {
   if (cached !== void 0) return cached;
-  if ("0.2.51".length > 0) {
-    cached = "0.2.51";
+  if ("0.3.0".length > 0) {
+    cached = "0.3.0";
     return cached;
   }
   cached = "unknown";
@@ -594,23 +594,88 @@ function dbcli2(args) {
 }
 
 // scripts/lakebase/migration-layout.ts
+import * as fs6 from "fs";
+import * as path5 from "path";
+
+// scripts/lakebase/dotnet-project.ts
 import * as fs5 from "fs";
 import * as path4 from "path";
+var EF_DESIGN_PACKAGE = "Microsoft.EntityFrameworkCore.Design";
+var DOTNET_FLYWAY_DIR = path4.join("db", "migrations");
+var SKIP_DIRS = /* @__PURE__ */ new Set(["bin", "obj", "node_modules", ".git", "client", "tests", "test"]);
+function safeReaddir(dir) {
+  try {
+    return fs5.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+function hasDotnetMarker(dir) {
+  return safeReaddir(dir).some(
+    (e) => e.isFile() && /\.(sln|slnx|csproj)$/i.test(e.name)
+  );
+}
+function findCsprojFiles(projectDir) {
+  const found = [];
+  const walk = (dir, depth) => {
+    for (const e of safeReaddir(dir)) {
+      const full = path4.join(dir, e.name);
+      if (e.isFile() && e.name.toLowerCase().endsWith(".csproj")) {
+        found.push(full);
+      } else if (e.isDirectory() && depth < 2 && !SKIP_DIRS.has(e.name.toLowerCase()) && !e.name.startsWith(".")) {
+        walk(full, depth + 1);
+      }
+    }
+  };
+  walk(projectDir, 0);
+  return found.sort();
+}
+function findEfCoreProject(projectDir) {
+  for (const csproj of findCsprojFiles(projectDir)) {
+    let content = "";
+    try {
+      content = fs5.readFileSync(csproj, "utf-8");
+    } catch {
+      continue;
+    }
+    if (content.includes(EF_DESIGN_PACKAGE)) {
+      const dir = path4.dirname(csproj);
+      return { csproj, projectDir: dir, migrationsDir: path4.join(dir, "Migrations") };
+    }
+  }
+  return null;
+}
+function isDotnetProject(projectDir) {
+  return hasDotnetMarker(projectDir);
+}
+function isDotnetFlywayProject(projectDir) {
+  return isDotnetProject(projectDir) && fs5.existsSync(path4.join(projectDir, DOTNET_FLYWAY_DIR));
+}
+var MAVEN_FLYWAY_DIR = path4.join("src", "main", "resources", "db", "migration");
+function flywayMigrationsDir(projectDir) {
+  const maven = path4.join(projectDir, MAVEN_FLYWAY_DIR);
+  if (fs5.existsSync(maven) || fs5.existsSync(path4.join(projectDir, "pom.xml"))) return maven;
+  if (isDotnetFlywayProject(projectDir)) return path4.join(projectDir, DOTNET_FLYWAY_DIR);
+  return maven;
+}
+
+// scripts/lakebase/migration-layout.ts
 var MIGRATION_LANGUAGES = [
   "java",
   "kotlin",
   "python",
   "nodejs",
+  "dotnet",
   "unknown"
 ];
 function detectLanguageAt(dir) {
-  if (fs5.existsSync(path4.join(dir, "pom.xml"))) {
-    const kotlinDir = path4.join(dir, "src", "main", "kotlin");
-    if (fs5.existsSync(kotlinDir)) {
+  if (fs6.existsSync(path5.join(dir, "pom.xml"))) {
+    const kotlinDir = path5.join(dir, "src", "main", "kotlin");
+    if (fs6.existsSync(kotlinDir)) {
       return "kotlin";
     }
     try {
-      const pom = fs5.readFileSync(path4.join(dir, "pom.xml"), "utf-8");
+      const pom = fs6.readFileSync(path5.join(dir, "pom.xml"), "utf-8");
       if (pom.includes("kotlin-maven-plugin")) {
         return "kotlin";
       }
@@ -618,10 +683,13 @@ function detectLanguageAt(dir) {
     }
     return "java";
   }
-  if (fs5.existsSync(path4.join(dir, "pyproject.toml")) || fs5.existsSync(path4.join(dir, "requirements.txt")) || fs5.existsSync(path4.join(dir, "alembic.ini"))) {
+  if (fs6.existsSync(path5.join(dir, "pyproject.toml")) || fs6.existsSync(path5.join(dir, "requirements.txt")) || fs6.existsSync(path5.join(dir, "alembic.ini"))) {
     return "python";
   }
-  if (fs5.existsSync(path4.join(dir, "package.json"))) {
+  if (hasDotnetMarker(dir)) {
+    return "dotnet";
+  }
+  if (fs6.existsSync(path5.join(dir, "package.json"))) {
     return "nodejs";
   }
   return "unknown";
@@ -642,14 +710,14 @@ function resolveMigrationLanguage(projectDir, configuredMigrationPath, override)
   if (!rel) {
     return "unknown";
   }
-  const rootResolved = path4.resolve(projectDir);
-  let dir = path4.resolve(projectDir, rel);
-  while (dir === rootResolved || dir.startsWith(rootResolved + path4.sep)) {
+  const rootResolved = path5.resolve(projectDir);
+  let dir = path5.resolve(projectDir, rel);
+  while (dir === rootResolved || dir.startsWith(rootResolved + path5.sep)) {
     const lang = detectLanguageAt(dir);
     if (lang !== "unknown") {
       return lang;
     }
-    const parent = path4.dirname(dir);
+    const parent = path5.dirname(dir);
     if (parent === dir) {
       break;
     }
@@ -659,21 +727,21 @@ function resolveMigrationLanguage(projectDir, configuredMigrationPath, override)
 }
 
 // scripts/lakebase/adapters/alembic-adapter.ts
-import * as fs7 from "fs";
-import * as path6 from "path";
+import * as fs8 from "fs";
+import * as path7 from "path";
 
 // scripts/lakebase/schema-migrate-runners/alembic.ts
 import { spawn } from "child_process";
-import * as fs6 from "fs";
-import * as path5 from "path";
+import * as fs7 from "fs";
+import * as path6 from "path";
 function resolveAlembicBin(projectDir) {
   const candidates = [
-    path5.join(projectDir, ".venv", "bin", "alembic"),
-    path5.join(projectDir, "venv", "bin", "alembic")
+    path6.join(projectDir, ".venv", "bin", "alembic"),
+    path6.join(projectDir, "venv", "bin", "alembic")
   ];
   for (const candidate of candidates) {
     try {
-      if (fs6.existsSync(candidate)) return candidate;
+      if (fs7.existsSync(candidate)) return candidate;
     } catch {
     }
   }
@@ -683,7 +751,7 @@ function spawnAlembic(projectDir, args, dsn) {
   return new Promise((resolve2, reject) => {
     const bin = resolveAlembicBin(projectDir);
     const env = { ...process.env };
-    env.PYTHONPATH = [projectDir, process.env.PYTHONPATH].filter(Boolean).join(path5.delimiter);
+    env.PYTHONPATH = [projectDir, process.env.PYTHONPATH].filter(Boolean).join(path6.delimiter);
     if (dsn) env.DATABASE_URL = dsn;
     const child = spawn(bin, args, {
       cwd: projectDir,
@@ -731,10 +799,10 @@ async function createAlembicRevision(opts) {
   const m = stdout.match(/Generating\s+(\S+\.py)/);
   if (m) return m[1].trim();
   for (const rel of ["migrations/versions", "alembic/versions"]) {
-    const dir = path5.join(opts.projectDir, rel);
-    if (!fs6.existsSync(dir)) continue;
-    const hit = fs6.readdirSync(dir).find((f) => f.startsWith(`${opts.revId}_`) && f.endsWith(".py"));
-    if (hit) return path5.join(dir, hit);
+    const dir = path6.join(opts.projectDir, rel);
+    if (!fs7.existsSync(dir)) continue;
+    const hit = fs7.readdirSync(dir).find((f) => f.startsWith(`${opts.revId}_`) && f.endsWith(".py"));
+    if (hit) return path6.join(dir, hit);
   }
   throw new SchemaMigrationError(
     `alembic revision succeeded but the created file could not be located.
@@ -845,15 +913,15 @@ async function buildDsn(args) {
 }
 function findVersionsDir(projectDir) {
   const candidates = [
-    path6.join(projectDir, "migrations", "versions"),
-    path6.join(projectDir, "alembic", "versions")
+    path7.join(projectDir, "migrations", "versions"),
+    path7.join(projectDir, "alembic", "versions")
   ];
-  return candidates.find((p) => fs7.existsSync(p));
+  return candidates.find((p) => fs8.existsSync(p));
 }
 function listAlembicFiles(projectDir) {
   const dir = findVersionsDir(projectDir);
   if (!dir) return [];
-  const files = fs7.readdirSync(dir).filter((f) => f.endsWith(".py") && !f.startsWith("__"));
+  const files = fs8.readdirSync(dir).filter((f) => f.endsWith(".py") && !f.startsWith("__"));
   return files.map((filename) => {
     const stem = filename.replace(/\.py$/, "");
     const sep2 = stem.indexOf("_");
@@ -878,9 +946,9 @@ var AlembicAdapter = {
    * here. Callers can still force-select via project.yaml#migration_tool.
    */
   detect(projectDir) {
-    if (fs7.existsSync(path6.join(projectDir, "alembic.ini"))) return true;
-    if (fs7.existsSync(path6.join(projectDir, "migrations", "env.py"))) return true;
-    if (fs7.existsSync(path6.join(projectDir, "alembic", "env.py"))) return true;
+    if (fs8.existsSync(path7.join(projectDir, "alembic.ini"))) return true;
+    if (fs8.existsSync(path7.join(projectDir, "migrations", "env.py"))) return true;
+    if (fs8.existsSync(path7.join(projectDir, "alembic", "env.py"))) return true;
     return false;
   },
   async apply(args) {
@@ -986,7 +1054,7 @@ var AlembicAdapter = {
         autogenerate: !!args.autogenerate,
         dsn
       });
-      return { status: "ok", version: revId, filename: path6.basename(created), path: created };
+      return { status: "ok", version: revId, filename: path7.basename(created), path: created };
     } catch (err) {
       return {
         status: "error",
@@ -1003,7 +1071,7 @@ var AlembicAdapter = {
       if (heads.length <= 1) return { status: "noop", headsBefore: heads };
       if (args.dryRun) return { status: "ok", headsBefore: heads };
       const created = await mergeAlembicHeads(args.projectDir, args.message ?? "merge heads");
-      const mergeRevision = path6.basename(created).replace(/\.py$/, "").split("_")[0];
+      const mergeRevision = path7.basename(created).replace(/\.py$/, "").split("_")[0];
       return { status: "ok", headsBefore: heads, mergeRevision, path: created };
     } catch (err) {
       return {
@@ -1017,12 +1085,12 @@ var AlembicAdapter = {
 registerSchemaMigrationAdapter(AlembicAdapter);
 
 // scripts/lakebase/adapters/flyway-adapter.ts
-import * as fs8 from "fs";
-import * as path8 from "path";
+import * as fs9 from "fs";
+import * as path9 from "path";
 
 // scripts/lakebase/schema-migrate-runners/flyway.ts
 import { spawn as spawn2 } from "child_process";
-import * as path7 from "path";
+import * as path8 from "path";
 function dsnToFlywayEnv(dsn) {
   const u = new URL(dsn);
   const user = decodeURIComponent(u.username);
@@ -1032,7 +1100,7 @@ function dsnToFlywayEnv(dsn) {
   return { url, user, password };
 }
 function migrationsLocation(projectDir) {
-  return `filesystem:${path7.join(projectDir, "src", "main", "resources", "db", "migration")}`;
+  return `filesystem:${flywayMigrationsDir(projectDir)}`;
 }
 function runFlyway(ctx, args) {
   const { url, user, password } = dsnToFlywayEnv(ctx.dsn);
@@ -1133,7 +1201,7 @@ async function statusFlyway(ctx) {
     if (state === "SUCCESS" || state === "BASELINE") {
       current = m.version;
     } else if (state === "PENDING") {
-      const filename = m.filepath ? path7.basename(m.filepath) : `V${m.version}__migration.sql`;
+      const filename = m.filepath ? path8.basename(m.filepath) : `V${m.version}__migration.sql`;
       pending.push({
         version: m.version,
         filename,
@@ -1156,9 +1224,9 @@ async function buildDsn2(args) {
   return result.url;
 }
 function listFlywayFiles(projectDir) {
-  const dir = path8.join(projectDir, "src", "main", "resources", "db", "migration");
-  if (!fs8.existsSync(dir)) return [];
-  const files = fs8.readdirSync(dir).filter((f) => /^V\d+(\.\d+)*__.+\.sql$/.test(f));
+  const dir = flywayMigrationsDir(projectDir);
+  if (!fs9.existsSync(dir)) return [];
+  const files = fs9.readdirSync(dir).filter((f) => /^V\d+(\.\d+)*__.+\.sql$/.test(f));
   return files.map((filename) => {
     const m = filename.match(/^V(\d+(?:\.\d+)*)__(.+)\.sql$/);
     const version = m[1];
@@ -1179,9 +1247,9 @@ function versionCompare(a, b) {
 }
 var FlywayAdapter = {
   id: "flyway",
-  languages: ["java", "kotlin"],
+  languages: ["java", "kotlin", "dotnet"],
   detect(projectDir) {
-    return fs8.existsSync(path8.join(projectDir, "pom.xml"));
+    return fs9.existsSync(path9.join(projectDir, "pom.xml")) || isDotnetFlywayProject(projectDir);
   },
   async apply(args) {
     const dsn = await buildDsn2(args);
@@ -1239,14 +1307,14 @@ var FlywayAdapter = {
   // optional-protocol shape makes this additive.
   async newMigration(args) {
     try {
-      const dir = path8.join(args.projectDir, "src", "main", "resources", "db", "migration");
-      fs8.mkdirSync(dir, { recursive: true });
+      const dir = flywayMigrationsDir(args.projectDir);
+      fs9.mkdirSync(dir, { recursive: true });
       const version = migrationTimestamp();
       const slug = migrationSlug2(args.slug);
       const filename = `V${version}__${slug}.sql`;
-      const full = path8.join(dir, filename);
-      if (fs8.existsSync(full)) throw new Error(`${filename} already exists`);
-      fs8.writeFileSync(
+      const full = path9.join(dir, filename);
+      if (fs9.existsSync(full)) throw new Error(`${filename} already exists`);
+      fs9.writeFileSync(
         full,
         `-- V${version}: ${args.slug}
 -- Flyway migration (write your DDL/DML below).
@@ -1268,18 +1336,18 @@ var FlywayAdapter = {
 registerSchemaMigrationAdapter(FlywayAdapter);
 
 // scripts/lakebase/adapters/knex-adapter.ts
-import * as fs10 from "fs";
-import * as path10 from "path";
+import * as fs11 from "fs";
+import * as path11 from "path";
 
 // scripts/lakebase/schema-migrate-runners/knex.ts
 import { spawn as spawn3 } from "child_process";
-import * as fs9 from "fs";
-import * as path9 from "path";
+import * as fs10 from "fs";
+import * as path10 from "path";
 var KNEXFILE_VARIANTS = ["knexfile.js", "knexfile.ts", "knexfile.mjs", "knexfile.cjs"];
 function findKnexfile(projectDir) {
   for (const name of KNEXFILE_VARIANTS) {
-    const p = path9.join(projectDir, name);
-    if (fs9.existsSync(p)) return p;
+    const p = path10.join(projectDir, name);
+    if (fs10.existsSync(p)) return p;
   }
   return void 0;
 }
@@ -1431,9 +1499,9 @@ async function buildDsn3(args) {
 }
 var KNEXFILE_VARIANTS2 = ["knexfile.js", "knexfile.ts", "knexfile.mjs", "knexfile.cjs"];
 function listKnexFiles(projectDir) {
-  const dir = path10.join(projectDir, "migrations");
-  if (!fs10.existsSync(dir)) return [];
-  const files = fs10.readdirSync(dir).filter((f) => (f.endsWith(".js") || f.endsWith(".ts")) && !f.startsWith("."));
+  const dir = path11.join(projectDir, "migrations");
+  if (!fs11.existsSync(dir)) return [];
+  const files = fs11.readdirSync(dir).filter((f) => (f.endsWith(".js") || f.endsWith(".ts")) && !f.startsWith("."));
   return files.map((filename) => {
     const stem = filename.replace(/\.(js|ts)$/, "");
     const m = stem.match(/^(\d{14})_(.+)$/);
@@ -1453,7 +1521,7 @@ var KnexAdapter = {
    * project.yaml#migration_tool.
    */
   detect(projectDir) {
-    return KNEXFILE_VARIANTS2.some((name) => fs10.existsSync(path10.join(projectDir, name)));
+    return KNEXFILE_VARIANTS2.some((name) => fs11.existsSync(path11.join(projectDir, name)));
   },
   async apply(args) {
     const dsn = await buildDsn3(args);
@@ -1526,9 +1594,9 @@ var KnexAdapter = {
   async newMigration(args) {
     try {
       const created = await createKnexMigration({ projectDir: args.projectDir, slug: migrationSlug2(args.slug) });
-      const stem = path10.basename(created).replace(/\.(js|ts)$/, "");
+      const stem = path11.basename(created).replace(/\.(js|ts)$/, "");
       const version = stem.match(/^(\d{14})_/)?.[1] ?? stem;
-      return { status: "ok", version, filename: path10.basename(created), path: created };
+      return { status: "ok", version, filename: path11.basename(created), path: created };
     } catch (err) {
       return {
         status: "error",
@@ -1541,6 +1609,360 @@ var KnexAdapter = {
   }
 };
 registerSchemaMigrationAdapter(KnexAdapter);
+
+// scripts/lakebase/adapters/efcore-adapter.ts
+import * as path13 from "path";
+
+// scripts/lakebase/schema-migrate-runners/efcore.ts
+import { spawn as spawn4 } from "child_process";
+import * as fs12 from "fs";
+import * as path12 from "path";
+import { Client as Client2 } from "pg";
+var MIGRATION_ID = /^(\d{14})_(.+)$/;
+function efVersion(id) {
+  return MIGRATION_ID.exec(id)?.[1] ?? id;
+}
+function efDescription(id) {
+  const name = MIGRATION_ID.exec(id)?.[2] ?? id;
+  return name.replace(/_/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+}
+function dsnToNpgsql(dsn) {
+  const u = new URL(dsn);
+  const parts = [
+    `Host=${u.hostname}`,
+    `Port=${u.port || "5432"}`,
+    `Database=${decodeURIComponent(u.pathname.replace(/^\//, "")) || "databricks_postgres"}`
+  ];
+  if (u.username) parts.push(`Username=${decodeURIComponent(u.username)}`);
+  if (u.password) parts.push(`Password=${decodeURIComponent(u.password)}`);
+  const sslmode = (u.searchParams.get("sslmode") ?? "require").toLowerCase();
+  const ssl = {
+    disable: "Disable",
+    allow: "Allow",
+    prefer: "Prefer",
+    require: "Require",
+    "verify-ca": "VerifyCA",
+    "verify-full": "VerifyFull"
+  };
+  parts.push(`SSL Mode=${ssl[sslmode] ?? "Require"}`);
+  const app = u.searchParams.get("application_name");
+  if (app) parts.push(`Application Name=${app}`);
+  return parts.map((p) => p.replace(/;/g, "")).join(";");
+}
+function parseEfJson(stdout) {
+  const body = stdout.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice("data:".length)).join("\n").trim();
+  if (!body) {
+    throw new SchemaMigrationError(`dotnet ef returned no JSON payload: ${stdout.slice(0, 400)}`);
+  }
+  try {
+    return JSON.parse(body);
+  } catch (err) {
+    throw new SchemaMigrationError(
+      `dotnet ef JSON parse failed: ${err instanceof Error ? err.message : String(err)}.
+Body (first 400 chars): ${body.slice(0, 400)}`
+    );
+  }
+}
+function requireProject(projectDir) {
+  const project = findEfCoreProject(projectDir);
+  if (!project) {
+    throw new SchemaMigrationError(
+      `No EF Core project found under ${projectDir}. Expected a *.csproj that references ${EF_DESIGN_PACKAGE}.`
+    );
+  }
+  return project;
+}
+function spawnDotnet(projectDir, args, env) {
+  return new Promise((resolve2, reject) => {
+    const child = spawn4("dotnet", args, {
+      cwd: projectDir,
+      env: { ...process.env, DOTNET_NOLOGO: "1", DOTNET_CLI_TELEMETRY_OPTOUT: "1", ...env },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", (err) => {
+      reject(
+        new SchemaMigrationError(
+          `Could not spawn dotnet. Is the .NET SDK installed and on PATH? ${err.message}`,
+          err
+        )
+      );
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve2({ stdout, stderr });
+      } else {
+        reject(
+          new SchemaMigrationError(
+            `dotnet ${args.join(" ")} exited with code ${code}.
+stdout: ${stdout}
+stderr: ${stderr}`
+          )
+        );
+      }
+    });
+  });
+}
+var restored = /* @__PURE__ */ new Set();
+async function ensureRestored(projectDir, csproj) {
+  if (restored.has(projectDir)) return;
+  if (fs12.existsSync(path12.join(projectDir, ".config", "dotnet-tools.json"))) {
+    await spawnDotnet(projectDir, ["tool", "restore"], {});
+  }
+  await spawnDotnet(projectDir, ["restore", csproj], {});
+  restored.add(projectDir);
+}
+async function runEf(projectDir, args, dsn, opts = {}) {
+  const project = requireProject(projectDir);
+  const csproj = path12.relative(projectDir, project.csproj) || project.csproj;
+  await ensureRestored(projectDir, csproj);
+  const full = ["ef", ...args, "--project", csproj, "--prefix-output"];
+  if (opts.noBuild) full.push("--no-build");
+  const env = {};
+  if (dsn) {
+    env.DATABASE_URL = dsn;
+    if (process.env.LAKEBASE_EFCORE_CONNECTION_ARG === "1") full.push("--connection", dsnToNpgsql(dsn));
+  }
+  return spawnDotnet(projectDir, full, env);
+}
+async function listEfMigrations(ctx, opts = {}) {
+  const { stdout, stderr } = await runEf(ctx.projectDir, ["migrations", "list", "--json"], ctx.dsn, opts);
+  const entries = parseEfJson(stdout);
+  if (ctx.dsn && entries.some((e) => e.applied === null)) {
+    const warning = stdout.split(/\r?\n/).filter((l) => /^(warn|error):/.test(l)).join("\n");
+    throw new SchemaMigrationError(
+      `dotnet ef could not read migration state from the database (check connectivity and credentials).
+${warning || stderr}`.trim()
+    );
+  }
+  return entries;
+}
+async function readEfHistory(dsn) {
+  const client = new Client2({ connectionString: dsn, application_name: connectionApplicationName() });
+  await client.connect();
+  try {
+    const exists = await client.query(`SELECT to_regclass('"__EFMigrationsHistory"') IS NOT NULL AS present`);
+    if (!exists.rows[0]?.present) return null;
+    const r = await client.query(`SELECT "MigrationId" FROM "__EFMigrationsHistory" ORDER BY "MigrationId"`);
+    return r.rows.map((row) => row.MigrationId);
+  } finally {
+    await client.end();
+  }
+}
+function toApplied(entries) {
+  return entries.map((e) => ({ version: efVersion(e.id), description: efDescription(e.id) }));
+}
+async function statusEfcore(ctx) {
+  const entries = await listEfMigrations(ctx);
+  const history = await (ctx.readHistory ?? readEfHistory)(ctx.dsn);
+  const current = history && history.length > 0 ? efVersion(history[history.length - 1]) : void 0;
+  const pending = entries.filter((e) => e.applied !== true).map((e) => ({ version: efVersion(e.id), filename: `${e.id}.cs`, description: efDescription(e.id) }));
+  return { current, pending, tool: "efcore" };
+}
+async function applyEfcore(ctx) {
+  const before = new Set((await listEfMigrations(ctx)).filter((e) => e.applied).map((e) => e.id));
+  await runEf(ctx.projectDir, ["database", "update"], ctx.dsn, { noBuild: true });
+  const after = await listEfMigrations(ctx, { noBuild: true });
+  const applied = toApplied(after.filter((e) => e.applied && !before.has(e.id)));
+  return { applied, alreadyAtLatest: applied.length === 0, tool: "efcore" };
+}
+function resolveEfTarget(target, applied) {
+  const t = target.trim();
+  if (t === "0") return "0";
+  const rel = /^-(\d+)$/.exec(t);
+  if (rel) {
+    const steps = Number(rel[1]);
+    if (steps < 1) throw new SchemaMigrationError(`Invalid rollback step: ${target}`);
+    const index = applied.length - 1 - steps;
+    if (index < -1) {
+      throw new SchemaMigrationError(`Cannot roll back ${steps} migration(s); only ${applied.length} applied.`);
+    }
+    return index === -1 ? "0" : applied[index].id;
+  }
+  const match = applied.find((e) => e.id === t || efVersion(e.id) === t || e.name === t);
+  if (!match) throw new SchemaMigrationError(`Rollback target '${target}' is not an applied migration.`);
+  return match.id;
+}
+async function rollbackEfcore(ctx) {
+  const beforeEntries = (await listEfMigrations(ctx)).filter((e) => e.applied);
+  const targetId = resolveEfTarget(ctx.target, beforeEntries);
+  await runEf(ctx.projectDir, ["database", "update", targetId], ctx.dsn, { noBuild: true });
+  const stillApplied = new Set((await listEfMigrations(ctx, { noBuild: true })).filter((e) => e.applied).map((e) => e.id));
+  return { rolledBack: toApplied(beforeEntries.filter((e) => !stillApplied.has(e.id)).reverse()), tool: "efcore" };
+}
+function efMigrationName(slug) {
+  const name = slug.split(/[^A-Za-z0-9]+/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join("");
+  if (!name) throw new SchemaMigrationError(`Cannot derive a migration name from '${slug}'.`);
+  return /^[0-9]/.test(name) ? `M${name}` : name;
+}
+async function createEfcoreMigration(opts) {
+  const project = requireProject(opts.projectDir);
+  const name = efMigrationName(opts.slug);
+  const existing = new Set(fs12.existsSync(project.migrationsDir) ? fs12.readdirSync(project.migrationsDir) : []);
+  await runEf(opts.projectDir, ["migrations", "add", name]);
+  const created = fs12.readdirSync(project.migrationsDir).filter((f) => !existing.has(f) && MIGRATION_ID.test(f.replace(/\.cs$/, "")) && !f.endsWith(".Designer.cs"));
+  if (created.length !== 1) {
+    throw new SchemaMigrationError(`Expected one new migration file for ${name}, found: ${created.join(", ") || "none"}`);
+  }
+  return { id: created[0].replace(/\.cs$/, ""), path: path12.join(project.migrationsDir, created[0]) };
+}
+function localEfMigrationIds(projectDir) {
+  const project = findEfCoreProject(projectDir);
+  if (!project || !fs12.existsSync(project.migrationsDir)) return [];
+  return fs12.readdirSync(project.migrationsDir).filter((f) => f.endsWith(".cs") && !f.endsWith(".Designer.cs") && MIGRATION_ID.test(f.slice(0, -3))).map((f) => f.slice(0, -3)).sort();
+}
+function efProductVersion(project) {
+  try {
+    const csproj = fs12.readFileSync(project.csproj, "utf-8");
+    const m = new RegExp(`${EF_DESIGN_PACKAGE.replace(/\./g, "\\.")}"\\s+Version="([^"]+)"`).exec(csproj);
+    if (m) return m[1];
+  } catch {
+  }
+  return "unknown";
+}
+async function stampEfcore(ctx) {
+  const project = requireProject(ctx.projectDir);
+  const ids = localEfMigrationIds(ctx.projectDir);
+  if (ids.length === 0) throw new SchemaMigrationError("No local EF Core migrations to stamp.");
+  const rev = ctx.revision.trim();
+  const end = rev === "head" ? ids.length - 1 : ids.findIndex((id) => id === rev || efVersion(id) === rev);
+  if (end < 0) throw new SchemaMigrationError(`Stamp revision '${ctx.revision}' is not a local migration.`);
+  const toStamp = ids.slice(0, end + 1);
+  const productVersion = efProductVersion(project);
+  const client = new Client2({ connectionString: ctx.dsn, application_name: connectionApplicationName() });
+  await client.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
+         "MigrationId" character varying(150) NOT NULL,
+         "ProductVersion" character varying(32) NOT NULL,
+         CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY ("MigrationId"))`
+    );
+    await client.query(`DELETE FROM "__EFMigrationsHistory" WHERE NOT ("MigrationId" = ANY($1::text[]))`, [toStamp]);
+    for (const id of toStamp) {
+      await client.query(
+        `INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion") VALUES ($1, $2)
+         ON CONFLICT ("MigrationId") DO NOTHING`,
+        [id, productVersion]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => void 0);
+    throw err;
+  } finally {
+    await client.end();
+  }
+  return efVersion(toStamp[toStamp.length - 1]);
+}
+
+// scripts/lakebase/adapters/efcore-adapter.ts
+async function buildDsn4(args) {
+  const result = await getConnection({
+    output: "dsn",
+    instance: args.instance,
+    branch: args.branch,
+    database: args.database,
+    endpointName: args.endpointName
+  });
+  return result.url;
+}
+function errMsg(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+function listEfCoreFiles(projectDir) {
+  return localEfMigrationIds(projectDir).map((id) => ({
+    version: efVersion(id),
+    filename: `${id}.cs`,
+    description: efDescription(id),
+    type: "CSharp",
+    tool: "efcore"
+  }));
+}
+var EfCoreAdapter = {
+  id: "efcore",
+  languages: ["dotnet"],
+  /** A .NET project (root marker) with a *.csproj that references Microsoft.EntityFrameworkCore.Design. */
+  detect(projectDir) {
+    return isDotnetProject(projectDir) && findEfCoreProject(projectDir) !== null;
+  },
+  async apply(args) {
+    try {
+      const dsn = await buildDsn4(args);
+      const r = await applyEfcore({ projectDir: args.projectDir, dsn });
+      return {
+        applied_migrations: r.applied,
+        status: r.alreadyAtLatest ? "noop" : "ok",
+        tool_specific: { alreadyAtLatest: r.alreadyAtLatest, tool: r.tool }
+      };
+    } catch (err) {
+      return { applied_migrations: [], status: "error", error: errMsg(err) };
+    }
+  },
+  async rollback(args) {
+    try {
+      const dsn = await buildDsn4(args);
+      const r = await rollbackEfcore({ projectDir: args.projectDir, dsn, target: args.target });
+      return {
+        rolled_back: r.rolledBack,
+        status: r.rolledBack.length === 0 ? "noop" : "ok",
+        tool_specific: { tool: r.tool }
+      };
+    } catch (err) {
+      return { rolled_back: [], status: "error", error: errMsg(err) };
+    }
+  },
+  async stamp(args) {
+    try {
+      const dsn = await buildDsn4(args);
+      const stamped = await stampEfcore({ projectDir: args.projectDir, dsn, revision: args.revision });
+      return { status: "ok", stamped_revision: stamped, tool_specific: { tool: "efcore" } };
+    } catch (err) {
+      return { status: "error", stamped_revision: null, error: errMsg(err) };
+    }
+  },
+  async status(args) {
+    try {
+      const dsn = await buildDsn4(args);
+      const r = await statusEfcore({ projectDir: args.projectDir, dsn });
+      return {
+        applied_version: r.current ?? null,
+        pending: r.pending,
+        applied: [],
+        status: "ok",
+        tool_specific: { tool: r.tool }
+      };
+    } catch (err) {
+      return { applied_version: null, pending: [], applied: [], status: "error", error: errMsg(err) };
+    }
+  },
+  async list(args) {
+    return { files: listEfCoreFiles(args.projectDir) };
+  },
+  // baseline: use stamp (EF has no separate baseline concept).
+  async newMigration(args) {
+    try {
+      const created = await createEfcoreMigration({ projectDir: args.projectDir, slug: args.slug });
+      return {
+        status: "ok",
+        version: efVersion(created.id),
+        filename: path13.basename(created.path),
+        path: created.path
+      };
+    } catch (err) {
+      return { status: "error", version: "", filename: "", path: "", error: errMsg(err) };
+    }
+  }
+};
+registerSchemaMigrationAdapter(EfCoreAdapter);
 
 // scripts/lakebase/schema-migrate.ts
 var SchemaMigrationError = class extends Error {
@@ -1555,7 +1977,7 @@ function detectLanguage(projectDir) {
   const lang = resolveMigrationLanguage(projectDir);
   if (lang === "unknown") {
     throw new SchemaMigrationError(
-      `Could not detect project language in ${projectDir}. Expected one of: pom.xml (java/kotlin), pyproject.toml or alembic.ini (python), package.json (nodejs). Pass {language} explicitly to override.`
+      `Could not detect project language in ${projectDir}. Expected one of: pom.xml (java/kotlin), pyproject.toml or alembic.ini (python), package.json (nodejs), *.sln or *.csproj (dotnet). Pass {language} explicitly to override.`
     );
   }
   return lang;
@@ -1569,12 +1991,12 @@ function migrationSlug2(description) {
 }
 
 // scripts/lakebase/workflow-drift.ts
-import * as fs12 from "fs";
-import * as path12 from "path";
+import * as fs14 from "fs";
+import * as path15 from "path";
 function findKitTemplatesDir(start) {
   let dir = start;
   for (let i = 0; i < 6; i++) {
-    const candidate = path12.join(
+    const candidate = path15.join(
       dir,
       "templates",
       "project",
@@ -1582,8 +2004,8 @@ function findKitTemplatesDir(start) {
       ".github",
       "workflows"
     );
-    if (fs12.existsSync(candidate)) return candidate;
-    const parent = path12.dirname(dir);
+    if (fs14.existsSync(candidate)) return candidate;
+    const parent = path15.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
@@ -1607,13 +2029,13 @@ function unifiedDiff(name, projectContent, templateContent) {
   return out.join("\n");
 }
 function detectWorkflowDrift(args) {
-  const projectWorkflowsDir = path12.join(
+  const projectWorkflowsDir = path15.join(
     args.projectDir,
     ".github",
     "workflows"
   );
-  const here = path12.dirname(new URL(import.meta.url).pathname);
-  const kitWorkflowsDir = args.kitDir ? path12.join(
+  const here = path15.dirname(new URL(import.meta.url).pathname);
+  const kitWorkflowsDir = args.kitDir ? path15.join(
     args.kitDir,
     "templates",
     "project",
@@ -1621,21 +2043,21 @@ function detectWorkflowDrift(args) {
     ".github",
     "workflows"
   ) : findKitTemplatesDir(here);
-  const templateFiles = fs12.existsSync(kitWorkflowsDir) ? fs12.readdirSync(kitWorkflowsDir).filter((f) => f.endsWith(".yml")) : [];
-  const projectFiles = fs12.existsSync(projectWorkflowsDir) ? fs12.readdirSync(projectWorkflowsDir).filter((f) => f.endsWith(".yml")) : [];
+  const templateFiles = fs14.existsSync(kitWorkflowsDir) ? fs14.readdirSync(kitWorkflowsDir).filter((f) => f.endsWith(".yml")) : [];
+  const projectFiles = fs14.existsSync(projectWorkflowsDir) ? fs14.readdirSync(projectWorkflowsDir).filter((f) => f.endsWith(".yml")) : [];
   const version = readKitVersion(kitWorkflowsDir);
   const seen = /* @__PURE__ */ new Set();
   const files = [];
   for (const name of templateFiles) {
     seen.add(name);
-    const projectPath2 = path12.join(projectWorkflowsDir, name);
-    const templatePath = path12.join(kitWorkflowsDir, name);
-    if (!fs12.existsSync(projectPath2)) {
+    const projectPath2 = path15.join(projectWorkflowsDir, name);
+    const templatePath = path15.join(kitWorkflowsDir, name);
+    if (!fs14.existsSync(projectPath2)) {
       files.push({ name, status: "missing" });
       continue;
     }
-    const projectContent = fs12.readFileSync(projectPath2, "utf8");
-    const templateContent = applyPlaceholders(fs12.readFileSync(templatePath, "utf8"), version);
+    const projectContent = fs14.readFileSync(projectPath2, "utf8");
+    const templateContent = applyPlaceholders(fs14.readFileSync(templatePath, "utf8"), version);
     if (projectContent === templateContent) {
       files.push({ name, status: "unchanged" });
     } else {
@@ -1666,10 +2088,10 @@ function detectWorkflowDrift(args) {
 function readKitVersion(kitWorkflowsDir) {
   let dir = kitWorkflowsDir;
   for (let i = 0; i < 5; i++) {
-    dir = path12.dirname(dir);
+    dir = path15.dirname(dir);
   }
   try {
-    const raw = fs12.readFileSync(path12.join(dir, "package.json"), "utf-8");
+    const raw = fs14.readFileSync(path15.join(dir, "package.json"), "utf-8");
     const pkg = JSON.parse(raw);
     return typeof pkg.version === "string" ? pkg.version : "unknown";
   } catch {
@@ -1682,10 +2104,10 @@ function applyPlaceholders(content, version) {
 
 // scripts/lakebase/doctor.ts
 function readEnvFile(projectDir) {
-  const envPath = path13.join(projectDir, ".env");
-  if (!fs13.existsSync(envPath)) return {};
+  const envPath = path16.join(projectDir, ".env");
+  if (!fs15.existsSync(envPath)) return {};
   const out = {};
-  for (const line of fs13.readFileSync(envPath, "utf8").split("\n")) {
+  for (const line of fs15.readFileSync(envPath, "utf8").split("\n")) {
     const m = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*)\s*$/);
     if (!m) continue;
     let val = m[2];
@@ -1839,6 +2261,23 @@ async function checkPrereq(spec, run) {
     detail: { version: trimmed }
   };
 }
+var DOTNET_PREREQ = {
+  name: "dotnet-sdk",
+  cmd: "dotnet",
+  versionArgs: ["--version"],
+  minMajor: 10,
+  label: ".NET SDK",
+  hint: "Install the .NET 10 SDK (e.g. `brew install --cask dotnet-sdk` or https://dot.net). EF Core's dotnet-ef is restored per project from .config/dotnet-tools.json."
+};
+async function checkLanguagePrerequisites(projectDir, run = defaultVersionRunner) {
+  let lang;
+  try {
+    lang = detectLanguage(projectDir);
+  } catch {
+    return [];
+  }
+  return lang === "dotnet" ? [await checkPrereq(DOTNET_PREREQ, run)] : [];
+}
 async function checkPrerequisites(run = defaultVersionRunner) {
   return Promise.all(PREREQS.map((spec) => checkPrereq(spec, run)));
 }
@@ -1940,7 +2379,7 @@ function checkEnv(projectDir) {
       name: "env-file",
       status: "warn",
       message: ".env not found",
-      detail: { projectDir, envPath: path13.join(projectDir, ".env") },
+      detail: { projectDir, envPath: path16.join(projectDir, ".env") },
       hint: "Run `lakebase-branch sync-env`, or `git checkout <branch>` so the post-checkout hook writes .env (or copy .env.example). The kit stores connection METADATA only , no DB token (the app mints a short-lived credential at runtime)."
     };
   }
@@ -2170,6 +2609,7 @@ async function runDoctor(args = {}) {
   const hooks = checkHooks(projectDir);
   const workflowDrift = checkWorkflowDrift(projectDir);
   const prereqs = await checkPrerequisites();
+  const languagePrereqs = await checkLanguagePrerequisites(projectDir);
   const lakebaseEnabled = auth.status === "ok" ? await checkLakebaseEnabled(profile) : {
     name: "lakebase-enabled",
     status: "skip",
@@ -2178,6 +2618,7 @@ async function runDoctor(args = {}) {
   const checks = [
     cli,
     ...prereqs,
+    ...languagePrereqs,
     auth,
     identity,
     lakebaseEnabled,
@@ -2291,7 +2732,7 @@ async function main() {
     return 0;
   }
   if (args.fix) {
-    const envPath = path14.join(args.projectDir ?? process.cwd(), ".env");
+    const envPath = path17.join(args.projectDir ?? process.cwd(), ".env");
     const res = await ensureProfilePinned({ envPath });
     if (!args.json) {
       if (res.pinned) {
