@@ -28,6 +28,7 @@ import { scaffoldAll, substrateVersion } from "./scaffold.js";
 import type { ClientFramework } from "./scaffold-language.js";
 import { createLongRunningBranch } from "./long-running-branch.js";
 import { enableE2eForProject } from "./enable-e2e.js";
+import { ensureClientLockfile } from "./client-lockfile.js";
 import { enableInfraForProject } from "./enable-infra.js";
 import { setupRunner } from "./runner-setup.js";
 import { syncCiSecrets, missingCiSecrets } from "../util/ci-secrets.js";
@@ -587,6 +588,24 @@ export async function createProject(
     dotnet: `.NET/ASP.NET Core (${input.migrationTool === "flyway" ? "Flyway" : "EF Core"})`,
   };
   const langLabel = langLabels[language] ?? language;
+
+  // ── Step 7f: client lockfile (UI projects) ───────────────────
+  // Generate + registry-normalize client/package-lock.json BEFORE the commit so
+  // `git add -A` tracks it. Without this the scaffold ships no client lock, and
+  // the user's hand-generated one (made on the Databricks network) pins the npm
+  // proxy and hangs a cold off-network install. Non-fatal: warn + continue.
+  if (clientFramework !== "none") {
+    report("Generating client package-lock.json (registry-normalized)...");
+    const lock = await ensureClientLockfile({ projectDir });
+    if (lock.generated) {
+      report(`  wrote client/package-lock.json${lock.swaps > 0 ? ` (normalized ${lock.swaps} proxy URL(s) to the public registry)` : ""}`);
+    } else {
+      const m = `Could not generate client/package-lock.json (${lock.reason ?? "unknown"}). Generate it with: (cd client && npm install) — the lock is committed on first push.`;
+      warnings.push(m);
+      report(`WARNING: ${m}`);
+    }
+  }
+
   report("Creating initial commit...");
   await commitAndPush({
     projectDir,
