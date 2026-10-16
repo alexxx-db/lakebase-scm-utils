@@ -389,8 +389,8 @@ var PKG_NAME = "@databricks-solutions/lakebase-scm-utils";
 var cached;
 function substrateSelfVersion() {
   if (cached !== void 0) return cached;
-  if ("0.3.1".length > 0) {
-    cached = "0.3.1";
+  if ("0.3.2".length > 0) {
+    cached = "0.3.2";
     return cached;
   }
   cached = "unknown";
@@ -640,29 +640,46 @@ import * as fs7 from "fs";
 import * as path6 from "path";
 
 // scripts/lakebase/schema-migrate-runners/alembic.ts
-import { spawn } from "child_process";
+import { spawn, execFileSync as execFileSync3 } from "child_process";
 import * as fs6 from "fs";
 import * as path5 from "path";
-function resolveAlembicBin(projectDir) {
-  const candidates = [
+var uvOnPath;
+function hasUv() {
+  if (uvOnPath !== void 0) return uvOnPath;
+  try {
+    execFileSync3("uv", ["--version"], { stdio: "ignore" });
+    uvOnPath = true;
+  } catch {
+    uvOnPath = false;
+  }
+  return uvOnPath;
+}
+function resolveAlembicInvocation(projectDir, uvAvailable = hasUv()) {
+  const venvCandidates = [
     path5.join(projectDir, ".venv", "bin", "alembic"),
     path5.join(projectDir, "venv", "bin", "alembic")
   ];
-  for (const candidate of candidates) {
+  for (const candidate of venvCandidates) {
     try {
-      if (fs6.existsSync(candidate)) return candidate;
+      if (fs6.existsSync(candidate)) return { bin: candidate, prefixArgs: [] };
     } catch {
     }
   }
-  return "alembic";
+  try {
+    if (uvAvailable && fs6.existsSync(path5.join(projectDir, "pyproject.toml"))) {
+      return { bin: "uv", prefixArgs: ["run", "alembic"] };
+    }
+  } catch {
+  }
+  return { bin: "alembic", prefixArgs: [] };
 }
 function spawnAlembic(projectDir, args, dsn) {
   return new Promise((resolve2, reject) => {
-    const bin = resolveAlembicBin(projectDir);
+    const { bin, prefixArgs } = resolveAlembicInvocation(projectDir);
     const env = { ...process.env };
     env.PYTHONPATH = [projectDir, process.env.PYTHONPATH].filter(Boolean).join(path5.delimiter);
     if (dsn) env.DATABASE_URL = dsn;
-    const child = spawn(bin, args, {
+    const child = spawn(bin, [...prefixArgs, ...args], {
       cwd: projectDir,
       env,
       stdio: ["ignore", "pipe", "pipe"]
@@ -2137,7 +2154,7 @@ async function reconcileTierBranch(args, deps = {}) {
 // scripts/lakebase/scm-workflow-state.ts
 import * as fs13 from "fs";
 import * as path14 from "path";
-import { execFileSync as execFileSync3 } from "child_process";
+import { execFileSync as execFileSync4 } from "child_process";
 var SCM_STATES = [
   "scaffold-complete",
   "feature-claimed",

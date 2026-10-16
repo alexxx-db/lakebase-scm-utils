@@ -2521,8 +2521,8 @@ var PKG_NAME = "@databricks-solutions/lakebase-scm-utils";
 var cached;
 function substrateSelfVersion() {
   if (cached !== void 0) return cached;
-  if ("0.3.1".length > 0) {
-    cached = "0.3.1";
+  if ("0.3.2".length > 0) {
+    cached = "0.3.2";
     return cached;
   }
   cached = "unknown";
@@ -14381,29 +14381,46 @@ import * as path24 from "path";
 
 // scripts/lakebase/schema-migrate-runners/alembic.ts
 init_esm_shims();
-import { spawn as spawn5 } from "child_process";
+import { spawn as spawn5, execFileSync as execFileSync7 } from "child_process";
 import * as fs23 from "fs";
 import * as path23 from "path";
-function resolveAlembicBin(projectDir) {
-  const candidates = [
+var uvOnPath;
+function hasUv() {
+  if (uvOnPath !== void 0) return uvOnPath;
+  try {
+    execFileSync7("uv", ["--version"], { stdio: "ignore" });
+    uvOnPath = true;
+  } catch {
+    uvOnPath = false;
+  }
+  return uvOnPath;
+}
+function resolveAlembicInvocation(projectDir, uvAvailable = hasUv()) {
+  const venvCandidates = [
     path23.join(projectDir, ".venv", "bin", "alembic"),
     path23.join(projectDir, "venv", "bin", "alembic")
   ];
-  for (const candidate of candidates) {
+  for (const candidate of venvCandidates) {
     try {
-      if (fs23.existsSync(candidate)) return candidate;
+      if (fs23.existsSync(candidate)) return { bin: candidate, prefixArgs: [] };
     } catch {
     }
   }
-  return "alembic";
+  try {
+    if (uvAvailable && fs23.existsSync(path23.join(projectDir, "pyproject.toml"))) {
+      return { bin: "uv", prefixArgs: ["run", "alembic"] };
+    }
+  } catch {
+  }
+  return { bin: "alembic", prefixArgs: [] };
 }
 function spawnAlembic(projectDir, args, dsn) {
   return new Promise((resolve2, reject) => {
-    const bin = resolveAlembicBin(projectDir);
+    const { bin, prefixArgs } = resolveAlembicInvocation(projectDir);
     const env = { ...process.env };
     env.PYTHONPATH = [projectDir, process.env.PYTHONPATH].filter(Boolean).join(path23.delimiter);
     if (dsn) env.DATABASE_URL = dsn;
-    const child = spawn5(bin, args, {
+    const child = spawn5(bin, [...prefixArgs, ...args], {
       cwd: projectDir,
       env,
       stdio: ["ignore", "pipe", "pipe"]

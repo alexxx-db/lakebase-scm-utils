@@ -8,7 +8,11 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { resolveAlembicBin, listAlembicHeads } from "../../scripts/lakebase/schema-migrate-runners/alembic.js";
+import {
+  resolveAlembicBin,
+  resolveAlembicInvocation,
+  listAlembicHeads,
+} from "../../scripts/lakebase/schema-migrate-runners/alembic.js";
 
 const tmpDirs: string[] = [];
 
@@ -66,6 +70,46 @@ describe("resolveAlembicBin", () => {
     // Resolution must not throw on a missing dir; fall through to PATH.
     const fake = path.join(os.tmpdir(), `lbscm-alembic-missing-${Date.now()}`);
     expect(resolveAlembicBin(fake)).toBe("alembic");
+  });
+});
+
+describe("resolveAlembicInvocation (uv-run fallback for a never-synced project)", () => {
+  it("uses the project-local .venv bin when present (no uv prefix), regardless of uv", () => {
+    const dir = mkTmp();
+    const venvBin = path.join(dir, ".venv", "bin", "alembic");
+    touch(venvBin);
+    // uvAvailable=true must NOT shadow an existing venv bin.
+    expect(resolveAlembicInvocation(dir, true)).toEqual({ bin: venvBin, prefixArgs: [] });
+  });
+
+  it("invokes `uv run alembic` for a uv project (pyproject.toml, no venv) when uv is on PATH", () => {
+    const dir = mkTmp();
+    touch(path.join(dir, "pyproject.toml"));
+    expect(resolveAlembicInvocation(dir, true)).toEqual({ bin: "uv", prefixArgs: ["run", "alembic"] });
+  });
+
+  it("falls back to bare `alembic` for a uv project when uv is NOT on PATH", () => {
+    const dir = mkTmp();
+    touch(path.join(dir, "pyproject.toml"));
+    expect(resolveAlembicInvocation(dir, false)).toEqual({ bin: "alembic", prefixArgs: [] });
+  });
+
+  it("does NOT reach for uv when there is no pyproject.toml (a non-uv project)", () => {
+    const dir = mkTmp();
+    expect(resolveAlembicInvocation(dir, true)).toEqual({ bin: "alembic", prefixArgs: [] });
+  });
+
+  it("resolveAlembicBin renders the uv-run invocation as a single string", () => {
+    const dir = mkTmp();
+    touch(path.join(dir, "pyproject.toml"));
+    // resolveAlembicBin uses the real hasUv(); assert only when uv is actually present
+    // so the test stays hermetic on a runner without uv.
+    const { bin } = resolveAlembicInvocation(dir);
+    if (bin === "uv") {
+      expect(resolveAlembicBin(dir)).toBe("uv run alembic");
+    } else {
+      expect(resolveAlembicBin(dir)).toBe("alembic");
+    }
   });
 });
 

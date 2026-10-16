@@ -79290,8 +79290,8 @@ var PKG_NAME = "@databricks-solutions/lakebase-scm-utils";
 var cached;
 function substrateSelfVersion() {
   if (cached !== void 0) return cached;
-  if ("0.3.1".length > 0) {
-    cached = "0.3.1";
+  if ("0.3.2".length > 0) {
+    cached = "0.3.2";
     return cached;
   }
   cached = "unknown";
@@ -79544,26 +79544,43 @@ init_cjs_shims();
 var import_node_child_process3 = require("child_process");
 var fs7 = __toESM(require("fs"), 1);
 var path5 = __toESM(require("path"), 1);
-function resolveAlembicBin(projectDir2) {
-  const candidates = [
+var uvOnPath;
+function hasUv() {
+  if (uvOnPath !== void 0) return uvOnPath;
+  try {
+    (0, import_node_child_process3.execFileSync)("uv", ["--version"], { stdio: "ignore" });
+    uvOnPath = true;
+  } catch {
+    uvOnPath = false;
+  }
+  return uvOnPath;
+}
+function resolveAlembicInvocation(projectDir2, uvAvailable = hasUv()) {
+  const venvCandidates = [
     path5.join(projectDir2, ".venv", "bin", "alembic"),
     path5.join(projectDir2, "venv", "bin", "alembic")
   ];
-  for (const candidate of candidates) {
+  for (const candidate of venvCandidates) {
     try {
-      if (fs7.existsSync(candidate)) return candidate;
+      if (fs7.existsSync(candidate)) return { bin: candidate, prefixArgs: [] };
     } catch {
     }
   }
-  return "alembic";
+  try {
+    if (uvAvailable && fs7.existsSync(path5.join(projectDir2, "pyproject.toml"))) {
+      return { bin: "uv", prefixArgs: ["run", "alembic"] };
+    }
+  } catch {
+  }
+  return { bin: "alembic", prefixArgs: [] };
 }
 function spawnAlembic(projectDir2, args, dsn) {
   return new Promise((resolve2, reject) => {
-    const bin = resolveAlembicBin(projectDir2);
+    const { bin, prefixArgs } = resolveAlembicInvocation(projectDir2);
     const env = { ...process.env };
     env.PYTHONPATH = [projectDir2, process.env.PYTHONPATH].filter(Boolean).join(path5.delimiter);
     if (dsn) env.DATABASE_URL = dsn;
-    const child = (0, import_node_child_process3.spawn)(bin, args, {
+    const child = (0, import_node_child_process3.spawn)(bin, [...prefixArgs, ...args], {
       cwd: projectDir2,
       env,
       stdio: ["ignore", "pipe", "pipe"]

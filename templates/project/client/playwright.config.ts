@@ -1,21 +1,47 @@
 import { defineConfig, devices } from "@playwright/test";
 import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
+
+// The backend lives at the project root, one level up from this client/ config
+// (Playwright runs from client/, hence cwd:".." on the webServers below).
+const ROOT = join(process.cwd(), "..");
 
 // End-to-end tests drive the rendered SPA through a real browser against the
 // real backend, backed by the paired Lakebase branch. Playwright boots BOTH
 // servers: the backend FIRST (so Vite's /api proxy has a target), then Vite.
 // Adapt the backend `command`/`url` to your stack if it is not Python/FastAPI.
 //
-// Resiliency: the ports are env-driven (E2E_BACKEND_PORT / E2E_CLIENT_PORT) with
-// the conventional defaults. In CI (reuseExistingServer:false), a stale server
-// left on 8000/5173 by a prior run would otherwise make webServer hard-fail with
-// "port already used". So CI's E2E step allocates FREE ports (scripts/port-utils.sh,
-// the same probe run-dev.sh uses) and hands them in here , the run moves off a
-// busy port instead of colliding. The Vite proxy is pointed at the resolved
-// backend port via VITE_PROXY_TARGET so /api + /health still reach the backend.
-const BACKEND_PORT = process.env.E2E_BACKEND_PORT ?? "8000";
-const CLIENT_PORT = process.env.E2E_CLIENT_PORT ?? "5173";
+// Resiliency: the ports are env-driven (E2E_BACKEND_PORT / E2E_CLIENT_PORT).
+// run-tests.sh and CI pre-allocate FREE ports (scripts/port-utils.sh) and hand them
+// in via those vars, so a stale server left on 8000/5173 by a prior run never makes
+// webServer hard-fail with "port already used". When NOTHING hands them in — a direct
+// `npx playwright test` (e.g. the build driver running a targeted spec, not through
+// run-tests.sh) — resolve a free port HERE the SAME way, by sourcing that one shared
+// free_port helper, so a direct run is just as collision-proof and never defaults onto
+// a busy :8000 / :5173. One free-port owner (port-utils.sh), two entry points. The Vite
+// proxy is pointed at the resolved backend port via VITE_PROXY_TARGET so /api + /health
+// still reach the backend wherever it landed.
+function resolvePort(envVar: string, fallback: number): string {
+  const fromEnv = process.env[envVar];
+  if (fromEnv) return fromEnv;
+  const portUtils = join(ROOT, "scripts", "port-utils.sh");
+  if (existsSync(portUtils)) {
+    try {
+      const out = execFileSync(
+        "bash",
+        ["-c", `source ${JSON.stringify(portUtils)} && free_port ${fallback}`],
+        { encoding: "utf8" }
+      ).trim();
+      if (/^\d+$/.test(out)) return out;
+    } catch {
+      // fall through to the conventional default
+    }
+  }
+  return String(fallback);
+}
+const BACKEND_PORT = resolvePort("E2E_BACKEND_PORT", 8000);
+const CLIENT_PORT = resolvePort("E2E_CLIENT_PORT", 5173);
 // Use 127.0.0.1, NOT localhost, and bind both servers to it (below). `localhost`
 // is ambiguous: on macOS it resolves to IPv6 ::1 first, but uvicorn binds IPv4
 // 127.0.0.1 only (its default) and Vite's dev server is likewise IPv4 — so a
@@ -31,7 +57,6 @@ const CLIENT_URL = `http://127.0.0.1:${CLIENT_PORT}`;
 // one level up from this client/ config (Playwright runs from client/, hence cwd:".." below). Pick
 // the migrate-before-serve command + health URL for the detected stack so E2E boots on ANY language
 // , a nodejs scaffold otherwise inherited the Python (alembic/uvicorn) command and could not start.
-const ROOT = join(process.cwd(), "..");
 function backendWebServer(): { command: string; url: string } {
   if (existsSync(join(ROOT, "pom.xml"))) {
     // Java/Kotlin (Spring): flyway migrate, then boot on the resolved port.

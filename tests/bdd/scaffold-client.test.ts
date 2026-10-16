@@ -178,19 +178,25 @@ describe("deployClientProject", () => {
     expect(vite).toMatch(/exclude:[\s\S]*tests\/e2e/); // Playwright e2e excluded from vitest
   });
 
-  it("Playwright config takes its ports from env with defaults, so CI can hand it FREE ports", () => {
+  it("Playwright config takes its ports from env, else self-allocates a FREE port via port-utils.sh", () => {
     // Resiliency: in CI (reuseExistingServer:false) a stale server on the default
     // port would make webServer hard-fail. The config reads E2E_BACKEND_PORT /
-    // E2E_CLIENT_PORT (CI allocates free ones via port-utils.sh) and defaults to
-    // the conventional 8000/5173 locally. The backend port must flow into the
-    // uvicorn command, the /health poll URL, AND the Vite proxy target.
+    // E2E_CLIENT_PORT (run-tests.sh / CI allocate free ones via port-utils.sh and
+    // hand them in). When NOTHING hands them in — a direct `npx playwright test` —
+    // it probes a free port HERE via the SAME free_port helper and only defaults to
+    // the conventional 8000/5173 if that is unavailable. The backend port must flow
+    // into the uvicorn command, the /health poll URL, AND the Vite proxy target.
     const target = mkTarget();
     deployClientProject(target, "demoapp", { templatesDir: TEMPLATES });
     const cfg = read(target, "client/playwright.config.ts");
     expect(cfg).toMatch(/E2E_BACKEND_PORT/);
     expect(cfg).toMatch(/E2E_CLIENT_PORT/);
-    expect(cfg).toMatch(/\?\?\s*"8000"/);
-    expect(cfg).toMatch(/\?\?\s*"5173"/);
+    // Self-allocation path: sources the shared helper and calls free_port with the
+    // conventional default as the probe start, rather than hardcoding the default.
+    expect(cfg).toMatch(/resolvePort\("E2E_BACKEND_PORT",\s*8000\)/);
+    expect(cfg).toMatch(/resolvePort\("E2E_CLIENT_PORT",\s*5173\)/);
+    expect(cfg).toMatch(/free_port/);
+    expect(cfg).toMatch(/port-utils\.sh/);
     // The uvicorn webServer command binds the resolved backend port, not a literal,
     // and binds IPv4 127.0.0.1 explicitly (see the IPv4 regression guard below).
     expect(cfg).toMatch(/uvicorn app\.main:app --host 127\.0\.0\.1 --port \$\{BACKEND_PORT\}/);

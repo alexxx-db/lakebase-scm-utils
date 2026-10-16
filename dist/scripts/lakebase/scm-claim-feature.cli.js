@@ -864,8 +864,8 @@ var PKG_NAME = "@databricks-solutions/lakebase-scm-utils";
 var cached;
 function substrateSelfVersion() {
   if (cached !== void 0) return cached;
-  if ("0.3.1".length > 0) {
-    cached = "0.3.1";
+  if ("0.3.2".length > 0) {
+    cached = "0.3.2";
     return cached;
   }
   cached = "unknown";
@@ -1886,29 +1886,46 @@ import * as fs10 from "fs";
 import * as path9 from "path";
 
 // scripts/lakebase/schema-migrate-runners/alembic.ts
-import { spawn } from "child_process";
+import { spawn, execFileSync as execFileSync5 } from "child_process";
 import * as fs9 from "fs";
 import * as path8 from "path";
-function resolveAlembicBin(projectDir) {
-  const candidates = [
+var uvOnPath;
+function hasUv() {
+  if (uvOnPath !== void 0) return uvOnPath;
+  try {
+    execFileSync5("uv", ["--version"], { stdio: "ignore" });
+    uvOnPath = true;
+  } catch {
+    uvOnPath = false;
+  }
+  return uvOnPath;
+}
+function resolveAlembicInvocation(projectDir, uvAvailable = hasUv()) {
+  const venvCandidates = [
     path8.join(projectDir, ".venv", "bin", "alembic"),
     path8.join(projectDir, "venv", "bin", "alembic")
   ];
-  for (const candidate of candidates) {
+  for (const candidate of venvCandidates) {
     try {
-      if (fs9.existsSync(candidate)) return candidate;
+      if (fs9.existsSync(candidate)) return { bin: candidate, prefixArgs: [] };
     } catch {
     }
   }
-  return "alembic";
+  try {
+    if (uvAvailable && fs9.existsSync(path8.join(projectDir, "pyproject.toml"))) {
+      return { bin: "uv", prefixArgs: ["run", "alembic"] };
+    }
+  } catch {
+  }
+  return { bin: "alembic", prefixArgs: [] };
 }
 function spawnAlembic(projectDir, args, dsn) {
   return new Promise((resolve3, reject) => {
-    const bin = resolveAlembicBin(projectDir);
+    const { bin, prefixArgs } = resolveAlembicInvocation(projectDir);
     const env = { ...process.env };
     env.PYTHONPATH = [projectDir, process.env.PYTHONPATH].filter(Boolean).join(path8.delimiter);
     if (dsn) env.DATABASE_URL = dsn;
-    const child = spawn(bin, args, {
+    const child = spawn(bin, [...prefixArgs, ...args], {
       cwd: projectDir,
       env,
       stdio: ["ignore", "pipe", "pipe"]

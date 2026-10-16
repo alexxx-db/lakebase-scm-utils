@@ -14,7 +14,7 @@
 // stdout/stderr is not load-bearing here, which keeps the runner robust
 // to logger config drift in the consumer's `alembic.ini`.
 
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -32,26 +32,70 @@ interface RunnerCtx {
 }
 
 /**
- * Resolve the `alembic` binary path. uv-managed Python projects install
- * alembic into a per-project `.venv/bin/alembic`, which is NOT on the
- * runner's PATH. Spawning bare `alembic` fails with ENOENT in CI even
- * after `uv sync` succeeded. Prefer the project-local venv when it
- * exists; fall back to bare `alembic` for projects with a pre-activated
- * shell venv or a system-wide install.
+ * Whether `uv` is on PATH. Memoized: resolution runs per alembic subcommand and
+ * the answer cannot change within a process.
  */
-export function resolveAlembicBin(projectDir: string): string {
-  const candidates = [
+let uvOnPath: boolean | undefined;
+function hasUv(): boolean {
+  if (uvOnPath !== undefined) return uvOnPath;
+  try {
+    execFileSync("uv", ["--version"], { stdio: "ignore" });
+    uvOnPath = true;
+  } catch {
+    uvOnPath = false;
+  }
+  return uvOnPath;
+}
+
+/**
+ * Resolve HOW to invoke alembic in a project: an executable plus the args that
+ * must PREFIX the alembic subcommand.
+ *
+ * uv-managed Python projects install alembic into a per-project `.venv/bin/alembic`,
+ * which is NOT on the runner's PATH, so that venv-local bin is preferred when it
+ * exists (it is also what CI has after `uv sync`). But a FRESH clone / rehydrated
+ * project has no `.venv` yet (nothing has run `uv sync`), and spawning bare
+ * `alembic` then fails ENOENT — the failure the `lk lakebase-new-migration` path
+ * hit on a never-synced project, before any test run created the venv. For such a
+ * uv project (pyproject.toml present and `uv` on PATH) invoke via `uv run alembic`,
+ * which auto-creates the venv and syncs the declared deps (alembic is a top-level
+ * dep) BEFORE running — exactly what scripts/run-tests.sh relies on. CI is
+ * unaffected: it hits the venv-local bin first. Last resort is bare `alembic`
+ * (a pre-activated shell venv or a system-wide install).
+ */
+export function resolveAlembicInvocation(
+  projectDir: string,
+  uvAvailable: boolean = hasUv()
+): { bin: string; prefixArgs: string[] } {
+  const venvCandidates = [
     path.join(projectDir, ".venv", "bin", "alembic"),
     path.join(projectDir, "venv", "bin", "alembic"),
   ];
-  for (const candidate of candidates) {
+  for (const candidate of venvCandidates) {
     try {
-      if (fs.existsSync(candidate)) return candidate;
+      if (fs.existsSync(candidate)) return { bin: candidate, prefixArgs: [] };
     } catch {
       // best-effort; keep checking
     }
   }
-  return "alembic";
+  try {
+    if (uvAvailable && fs.existsSync(path.join(projectDir, "pyproject.toml"))) {
+      return { bin: "uv", prefixArgs: ["run", "alembic"] };
+    }
+  } catch {
+    // best-effort; fall through to bare alembic
+  }
+  return { bin: "alembic", prefixArgs: [] };
+}
+
+/**
+ * Back-compat: the executable that would run alembic (the venv-local path or bare
+ * `alembic`). Prefer resolveAlembicInvocation, which also models the `uv run`
+ * prefix for a never-synced uv project.
+ */
+export function resolveAlembicBin(projectDir: string): string {
+  const { bin, prefixArgs } = resolveAlembicInvocation(projectDir);
+  return prefixArgs.length ? `${bin} ${prefixArgs.join(" ")}` : bin;
 }
 
 /**
@@ -65,7 +109,7 @@ function spawnAlembic(
   dsn?: string
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const bin = resolveAlembicBin(projectDir);
+    const { bin, prefixArgs } = resolveAlembicInvocation(projectDir);
     // Put the project root on PYTHONPATH so `app` is importable for EVERY alembic
     // subcommand. `upgrade` runs env.py (which prepends sys.path), but `history`
     // and other read-only commands do not, yet they still import every migration
@@ -74,7 +118,7 @@ function spawnAlembic(
     const env: NodeJS.ProcessEnv = { ...process.env };
     env.PYTHONPATH = [projectDir, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter);
     if (dsn) env.DATABASE_URL = dsn;
-    const child = spawn(bin, args, {
+    const child = spawn(bin, [...prefixArgs, ...args], {
       cwd: projectDir,
       env,
       stdio: ["ignore", "pipe", "pipe"],

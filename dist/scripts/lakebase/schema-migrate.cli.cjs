@@ -79324,8 +79324,8 @@ var PKG_NAME = "@databricks-solutions/lakebase-scm-utils";
 var cached;
 function substrateSelfVersion() {
   if (cached !== void 0) return cached;
-  if ("0.3.1".length > 0) {
-    cached = "0.3.1";
+  if ("0.3.2".length > 0) {
+    cached = "0.3.2";
     return cached;
   }
   cached = "unknown";
@@ -79578,26 +79578,43 @@ init_cjs_shims();
 var import_node_child_process3 = require("child_process");
 var fs7 = __toESM(require("fs"), 1);
 var path5 = __toESM(require("path"), 1);
-function resolveAlembicBin(projectDir) {
-  const candidates = [
+var uvOnPath;
+function hasUv() {
+  if (uvOnPath !== void 0) return uvOnPath;
+  try {
+    (0, import_node_child_process3.execFileSync)("uv", ["--version"], { stdio: "ignore" });
+    uvOnPath = true;
+  } catch {
+    uvOnPath = false;
+  }
+  return uvOnPath;
+}
+function resolveAlembicInvocation(projectDir, uvAvailable = hasUv()) {
+  const venvCandidates = [
     path5.join(projectDir, ".venv", "bin", "alembic"),
     path5.join(projectDir, "venv", "bin", "alembic")
   ];
-  for (const candidate of candidates) {
+  for (const candidate of venvCandidates) {
     try {
-      if (fs7.existsSync(candidate)) return candidate;
+      if (fs7.existsSync(candidate)) return { bin: candidate, prefixArgs: [] };
     } catch {
     }
   }
-  return "alembic";
+  try {
+    if (uvAvailable && fs7.existsSync(path5.join(projectDir, "pyproject.toml"))) {
+      return { bin: "uv", prefixArgs: ["run", "alembic"] };
+    }
+  } catch {
+  }
+  return { bin: "alembic", prefixArgs: [] };
 }
 function spawnAlembic(projectDir, args, dsn) {
   return new Promise((resolve2, reject) => {
-    const bin = resolveAlembicBin(projectDir);
+    const { bin, prefixArgs } = resolveAlembicInvocation(projectDir);
     const env = { ...process.env };
     env.PYTHONPATH = [projectDir, process.env.PYTHONPATH].filter(Boolean).join(path5.delimiter);
     if (dsn) env.DATABASE_URL = dsn;
-    const child = (0, import_node_child_process3.spawn)(bin, args, {
+    const child = (0, import_node_child_process3.spawn)(bin, [...prefixArgs, ...args], {
       cwd: projectDir,
       env,
       stdio: ["ignore", "pipe", "pipe"]
