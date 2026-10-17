@@ -118,9 +118,9 @@ class Base(DeclarativeBase):
     pass
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# The request-scoped session DEPENDENCY (`get_session`) lives in the repository layer,
+# at `app/repositories/session.py` — NOT here. This module is pure infrastructure (engine,
+# SessionLocal, Base); keeping the per-request session door out of it is what lets a
+# service-backed feature's boundary stay off infrastructure (the layering contract). A route
+# that needs a session depends on the session a SERVICE exposes (sourced from the repository
+# layer), never `from app.database import ...` a session dependency.

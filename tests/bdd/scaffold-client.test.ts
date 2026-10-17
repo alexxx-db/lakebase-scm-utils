@@ -197,6 +197,12 @@ describe("deployClientProject", () => {
     expect(cfg).toMatch(/resolvePort\("E2E_CLIENT_PORT",\s*5173\)/);
     expect(cfg).toMatch(/free_port/);
     expect(cfg).toMatch(/port-utils\.sh/);
+    // WORKER REUSE: Playwright re-evaluates this config in each test worker, so resolvePort must
+    // PERSIST the chosen port into process.env — a worker then reads it back (via `fromEnv`)
+    // instead of re-allocating a DIFFERENT free port. Without it the main process picks 5173 +
+    // starts Vite there, a worker finds 5173 taken, allocates 5174, points baseURL at 5174, and
+    // the browser specs fail "not reachable" though the app is healthy on the real port.
+    expect(cfg).toMatch(/process\.env\[envVar\]\s*=\s*resolved/);
     // The uvicorn webServer command binds the resolved backend port, not a literal,
     // and binds IPv4 127.0.0.1 explicitly (see the IPv4 regression guard below).
     expect(cfg).toMatch(/uvicorn app\.main:app --host 127\.0\.0\.1 --port \$\{BACKEND_PORT\}/);

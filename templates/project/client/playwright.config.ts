@@ -25,6 +25,7 @@ const ROOT = join(process.cwd(), "..");
 function resolvePort(envVar: string, fallback: number): string {
   const fromEnv = process.env[envVar];
   if (fromEnv) return fromEnv;
+  let resolved = String(fallback);
   const portUtils = join(ROOT, "scripts", "port-utils.sh");
   if (existsSync(portUtils)) {
     try {
@@ -33,12 +34,21 @@ function resolvePort(envVar: string, fallback: number): string {
         ["-c", `source ${JSON.stringify(portUtils)} && free_port ${fallback}`],
         { encoding: "utf8" }
       ).trim();
-      if (/^\d+$/.test(out)) return out;
+      if (/^\d+$/.test(out)) resolved = out;
     } catch {
       // fall through to the conventional default
     }
   }
-  return String(fallback);
+  // PERSIST the chosen port into the environment so Playwright's WORKER processes reuse it.
+  // Playwright evaluates this config in the main process AND re-evaluates it in each test
+  // worker. Without this, a worker re-runs resolvePort with E2E_CLIENT_PORT still unset, finds
+  // the port the main process picked (e.g. 5173) now TAKEN by the Vite webServer, allocates a
+  // DIFFERENT free port (5174), and points `baseURL` at 5174 where nothing listens — so the
+  // browser specs fail "not reachable" even though the app is healthy on the real port. Workers
+  // are spawned AFTER the main-process config load and inherit its process.env, so recording the
+  // resolution here makes every worker read it back via `fromEnv` above: resolve once, share it.
+  process.env[envVar] = resolved;
+  return resolved;
 }
 const BACKEND_PORT = resolvePort("E2E_BACKEND_PORT", 8000);
 const CLIENT_PORT = resolvePort("E2E_CLIENT_PORT", 5173);
