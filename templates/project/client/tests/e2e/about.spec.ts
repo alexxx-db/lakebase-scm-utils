@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./consort-fixtures";
 
 // The reachability pattern proven end-to-end: a feature page is reachable by
 // NAVIGATING the real app (a navbar link / a route), not just by mounting the

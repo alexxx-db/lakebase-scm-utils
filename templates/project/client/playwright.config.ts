@@ -101,7 +101,12 @@ export default defineConfig({
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+  // `../consort-test-reporter.ts` (shared with the root config) appends each `@T<id>`-tagged test
+  // to `.consort/test-run.jsonl` as it finishes, for the dashboard's per-test live signal. It walks
+  // up from cwd to the project `.consort`, so running from client/ still finds the right ledger.
+  reporter: process.env.CI
+    ? [["list"], ["html", { open: "never" }], ["../consort-test-reporter.ts"]]
+    : [["list"], ["../consort-test-reporter.ts"]],
   use: {
     baseURL: CLIENT_URL,
     trace: "on-first-retry",

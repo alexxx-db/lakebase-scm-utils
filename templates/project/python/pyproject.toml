@@ -33,4 +33,5 @@ dev = [
 # downgrade/upgrade cannot corrupt the shared verify DB for sibling tests.
 markers = [
     "migration: schema-mutating migration-reversibility test; runs on an isolated ephemeral branch",
+    "testid: the test-list id (e.g. @pytest.mark.testid(\"T37\")) this test realizes, for the dashboard's per-test live signal",
 ]

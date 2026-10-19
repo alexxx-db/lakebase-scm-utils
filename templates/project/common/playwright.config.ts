@@ -37,7 +37,12 @@ export default defineConfig({
   // network jitter against a freshly-provisioned paired branch endpoint.
   retries: process.env.CI ? 1 : 0,
   workers: process.env.CI ? 2 : undefined,
-  reporter: process.env.CI ? [["html", { open: "never" }], ["list"]] : "list",
+  // `./consort-test-reporter.ts` appends each `@T<id>`-tagged test to `.consort/test-run.jsonl` as
+  // it finishes, so the Consort dashboard lights per-test progress live (see that file). It rides
+  // alongside the human reporters and never replaces them.
+  reporter: process.env.CI
+    ? [["html", { open: "never" }], ["list"], ["./consort-test-reporter.ts"]]
+    : [["list"], ["./consort-test-reporter.ts"]],
   use: {
     baseURL,
     trace: "on-first-retry",

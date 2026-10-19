@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./consort-fixtures";
 
 // The one behavior a fresh scaffold can prove end-to-end: the SPA loads, calls
 // the backend /health through the Vite proxy, and shows the result as an

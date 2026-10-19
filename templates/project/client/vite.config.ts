@@ -33,6 +33,14 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: "./tests/setup.ts",
+    // Boot a REAL backend (migrated, against the paired branch) for the whole component run, so
+    // component tests hit the real `/api` service — never a mock (kit principle). The fetch shim in
+    // tests/setup.ts routes relative `/api` to it. Torn down after. See vitest.globalSetup.ts.
+    globalSetup: "./vitest.globalSetup.ts",
+    // Keep Vitest's own `default` reporter for humans, and add the Consort per-test reporter:
+    // it appends each `@T<id>`-named test to `.consort/test-run.jsonl` as it finishes, so the
+    // dashboard lights client tests live alongside the backend (pytest) and E2E (Playwright) ones.
+    reporters: ["default", "./consort-vitest-reporter.ts"],
     include: ["src/**/*.test.{ts,tsx}", "tests/**/*.test.{ts,tsx}"],
     exclude: [...configDefaults.exclude, "tests/e2e/**"],
     css: false,
