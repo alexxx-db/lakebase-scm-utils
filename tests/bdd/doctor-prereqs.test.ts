@@ -12,6 +12,7 @@ import {
   checkLanguagePrerequisites,
   checkPrerequisites,
   checkLakebaseEnabled,
+  checkGitHubTokenScope,
   type VersionRunner,
 } from "../../scripts/lakebase/doctor.js";
 
@@ -215,5 +216,32 @@ describe("checkLanguagePrerequisites (.NET SDK, only for dotnet projects)", () =
       fs.rmSync(node, { recursive: true, force: true });
       fs.rmSync(empty, { recursive: true, force: true });
     }
+  });
+});
+
+describe("checkGitHubTokenScope (the .github/workflows/* push precondition)", () => {
+  it("ok when the token grants the workflow scope", async () => {
+    const r = await checkGitHubTokenScope(async () => ({ granted: ["repo", "workflow"], missing: [] }));
+    expect(r.status).toBe("ok");
+    expect(r.name).toBe("github-token-scope");
+  });
+
+  it("FAILS with a grant hint when workflow is missing", async () => {
+    const r = await checkGitHubTokenScope(async () => ({ granted: ["repo"], missing: ["workflow"] }));
+    expect(r.status).toBe("fail");
+    expect(r.message).toMatch(/workflow/);
+    expect(r.hint).toMatch(/gh auth refresh -h github\.com -s workflow/);
+  });
+
+  it("SKIPS (not fail) when scopes aren't visible — a fine-grained / App token", async () => {
+    const r = await checkGitHubTokenScope(async () => ({ granted: null, missing: [] }));
+    expect(r.status).toBe("skip");
+  });
+
+  it("SKIPS when the probe throws (no token resolved / GitHub unreachable)", async () => {
+    const r = await checkGitHubTokenScope(async () => {
+      throw new Error("No GitHub auth available");
+    });
+    expect(r.status).toBe("skip");
   });
 });

@@ -14,6 +14,8 @@ import {
   validateCreateInputs,
   dirIsEmpty,
   checkDatabricksAuth,
+  checkGitHubWorkflowScope,
+  githubWorkflowScopePrereqMessage,
 } from "../../scripts/lakebase/create-preflight.js";
 
 const tmpDirs: string[] = [];
@@ -259,5 +261,45 @@ describe("W9: withLakebaseRollback", () => {
         async () => { throw new Error("scaffold failed"); },
       ),
     ).rejects.toThrow(/could not roll back.*delete-project p4/s);
+  });
+});
+
+describe("checkGitHubWorkflowScope (fail-fast before the scaffold's final push)", () => {
+  it("passes when the token grants the workflow scope", async () => {
+    const res = await checkGitHubWorkflowScope(async () => ({
+      granted: ["repo", "workflow", "delete_repo"],
+      missing: [],
+    }));
+    expect(res.ok).toBe(true);
+  });
+
+  it("FAILS with the granted scopes when workflow is missing", async () => {
+    const res = await checkGitHubWorkflowScope(async () => ({
+      granted: ["repo", "delete_repo"],
+      missing: ["workflow"],
+    }));
+    expect(res.ok).toBe(false);
+    expect(res.reason).toMatch(/repo, delete_repo/);
+    expect(res.reason).toMatch(/workflow/);
+  });
+
+  it("passes (best-effort) when scopes are not visible — a fine-grained / App token (granted null)", async () => {
+    const res = await checkGitHubWorkflowScope(async () => ({ granted: null, missing: [] }));
+    expect(res.ok).toBe(true);
+  });
+
+  it("passes (best-effort) when the probe throws, so a flaky probe never blocks scaffold", async () => {
+    const res = await checkGitHubWorkflowScope(async () => {
+      throw new Error("network down");
+    });
+    expect(res.ok).toBe(true);
+  });
+
+  it("prereq message names the workflow scope + the three grant paths", () => {
+    const msg = githubWorkflowScopePrereqMessage("token grants [repo] but not `workflow`");
+    expect(msg).toMatch(/`workflow` OAuth scope/);
+    expect(msg).toMatch(/gh auth refresh -h github\.com -s workflow/);
+    expect(msg).toMatch(/GITHUB_TOKEN/);
+    expect(msg).toMatch(/token grants \[repo\]/);
   });
 });

@@ -4,7 +4,7 @@
 // (scripts/github/auth.ts).
 
 import { Octokit, RequestError } from "octokit";
-import { resolveGitHubToken } from "./auth.js";
+import { resolveGitHubToken, GITHUB_SCOPES } from "./auth.js";
 import { parseOwnerRepo, formatOwnerRepo } from "../util/parse-owner-repo.js";
 
 export class GitHubRepoError extends Error {
@@ -53,6 +53,42 @@ export async function getCurrentUser(): Promise<string> {
     return await getLogin(ctx);
   } catch (err) {
     wrap(err, "GitHub authentication failed");
+  }
+}
+
+export interface GitHubScopeStatus {
+  /** Granted OAuth scopes, or null when the token exposes NONE — a fine-grained
+   *  PAT or GitHub App token carries no OAuth scope header; its permissions
+   *  aren't a scope set, so callers MUST treat null as "unknown", never a miss. */
+  granted: string[] | null;
+  /** Required scopes absent from `granted` (empty when `granted` is null). */
+  missing: string[];
+}
+
+/**
+ * Read the authenticated token's granted OAuth scopes from the GitHub API
+ * `x-oauth-scopes` response header and diff them against `required`. A classic
+ * OAuth/PAT token returns a (possibly empty) comma-separated header; a
+ * fine-grained PAT / GitHub App token omits it entirely → `granted: null`.
+ * Reading your own user needs no special scope, so this succeeds for any VALID
+ * token regardless of scopes (and throws, like the other ops, on a bad token /
+ * network error — callers decide whether that is blocking).
+ */
+export async function checkGitHubScopes(
+  required: readonly string[] = GITHUB_SCOPES
+): Promise<GitHubScopeStatus> {
+  try {
+    const ctx = await newContext();
+    const res = await ctx.octokit.rest.users.getAuthenticated();
+    const header = (res.headers as Record<string, string | undefined>)["x-oauth-scopes"];
+    if (header === undefined || header === null) return { granted: null, missing: [] };
+    const granted = String(header)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return { granted, missing: required.filter((s) => !granted.includes(s)) };
+  } catch (err) {
+    wrap(err, "GitHub scope check failed");
   }
 }
 

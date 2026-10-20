@@ -20,6 +20,8 @@ import {
 import {
   checkDatabricksAuth,
   databricksAuthPrereqMessage,
+  checkGitHubWorkflowScope,
+  githubWorkflowScopePrereqMessage,
   withLakebaseRollback,
   validateCreateInputs,
   dirIsEmpty,
@@ -287,6 +289,19 @@ export async function createProject(
   const auth = await checkDatabricksAuth(host);
   if (!auth.ok) {
     throw new Error(databricksAuthPrereqMessage(host, auth.reason));
+  }
+
+  // ── GitHub token `workflow` scope precondition ────────────────
+  // The scaffold's final push commits .github/workflows/*, which GitHub rejects
+  // unless the token carries the `workflow` OAuth scope. Check it HERE, before any
+  // GitHub repo or Lakebase project exists, so a missing scope fails in seconds with
+  // a fix instead of at the final push after all provisioning (which then rolls back).
+  if (useGithub) {
+    report("Checking GitHub token scopes...");
+    const scope = await checkGitHubWorkflowScope();
+    if (!scope.ok) {
+      throw new Error(githubWorkflowScopePrereqMessage(scope.reason));
+    }
   }
 
   // ── Step 1+2: GitHub repo + clone, OR local-only setup ────────

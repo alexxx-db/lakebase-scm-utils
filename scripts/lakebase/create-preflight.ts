@@ -19,6 +19,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { deleteLakebaseProject } from "./lakebase-project.js";
 import { runDatabricks } from "./databricks-cli.js";
+import { checkGitHubScopes } from "../github/repo.js";
 
 export interface PreflightResult {
   ok: boolean;
@@ -111,6 +112,50 @@ export async function checkDatabricksAuth(
     const e = err as { stderr?: string; message?: string };
     return { ok: false, reason: lastLines(e.stderr, 2) || e.message || "databricks auth token failed" };
   }
+}
+
+/** Injectable scope probe for checkGitHubWorkflowScope (defaults to the real GitHub API read). */
+type ScopeProbe = () => Promise<{ granted: string[] | null; missing: string[] }>;
+
+/**
+ * W-workflow-scope: preflight the GitHub token's `workflow` OAuth scope BEFORE
+ * any repo / Lakebase project is created. The scaffold's FINAL push commits
+ * `.github/workflows/*`, which GitHub REJECTS unless the token carries
+ * `workflow` — without this, that rejection only surfaces at the very end,
+ * after all the provisioning, forcing a full rollback. Gating the ONE scope the
+ * push needs here turns that into an immediate, actionable failure.
+ *
+ * Non-blocking in two cases (ok:true): a token that exposes NO OAuth scopes
+ * (fine-grained PAT / GitHub App token — `granted` null; its workflow
+ * permission isn't visible this way, so we can't assert), and any probe error
+ * (a genuinely bad/absent token surfaces clearly at repo creation, not here).
+ */
+export async function checkGitHubWorkflowScope(
+  probe: ScopeProbe = () => checkGitHubScopes(["workflow"]),
+): Promise<PreflightResult> {
+  try {
+    const { granted, missing } = await probe();
+    if (granted === null) return { ok: true }; // scopes not visible → can't assert, don't false-fail
+    if (missing.includes("workflow")) {
+      return { ok: false, reason: `token grants [${granted.join(", ") || "none"}] but not \`workflow\`` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: true }; // best-effort: a probe failure must not block scaffold
+  }
+}
+
+/** The actionable prereq message for a GitHub token missing the `workflow` scope. */
+export function githubWorkflowScopePrereqMessage(reason?: string): string {
+  return (
+    "The GitHub token lacks the `workflow` OAuth scope, required to push the project's " +
+    "`.github/workflows/*` CI files. (Without this check, scaffolding runs all the way to the " +
+    "final push, is rejected, and rolls back.) Grant the scope, then re-run:\n" +
+    "  - gh CLI:  gh auth refresh -h github.com -s workflow\n" +
+    "  - VS Code: re-sign in to GitHub and approve the workflow scope\n" +
+    "  - token:   set GITHUB_TOKEN to a PAT that includes the `workflow` scope" +
+    (reason ? `\n(${reason})` : "")
+  );
 }
 
 /** The actionable prereq message for a failed auth probe (W5). */

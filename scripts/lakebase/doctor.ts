@@ -14,6 +14,7 @@ import { listBranches } from "./branch-utils.js";
 import { verifyHooks } from "./project-verify.js";
 import { detectLanguage } from "./schema-migrate.js";
 import { detectWorkflowDrift } from "./workflow-drift.js";
+import { checkGitHubScopes } from "../github/repo.js";
 
 export type CheckStatus = "ok" | "warn" | "fail" | "skip";
 
@@ -593,6 +594,53 @@ async function checkGitRemote(projectDir: string): Promise<CheckResult> {
   }
 }
 
+/**
+ * Probe whether the GitHub token carries the `workflow` scope needed to push
+ * `.github/workflows/*`. A missing scope is exactly why a scaffold push (or any
+ * later workflow edit) gets rejected at the very end and rolls back. Best-effort:
+ * no token, OR a fine-grained / GitHub App token (no visible OAuth scopes), OR
+ * an API error → `skip`, never a false `fail`. `probe` is injectable for tests.
+ */
+export async function checkGitHubTokenScope(
+  probe: () => Promise<{ granted: string[] | null; missing: string[] }> = () =>
+    checkGitHubScopes(["workflow"])
+): Promise<CheckResult> {
+  try {
+    const { granted, missing } = await probe();
+    if (granted === null) {
+      return {
+        name: "github-token-scope",
+        status: "skip",
+        message:
+          "GitHub token scopes not visible (fine-grained PAT / App token) - `workflow` scope unverified",
+      };
+    }
+    if (missing.includes("workflow")) {
+      return {
+        name: "github-token-scope",
+        status: "fail",
+        message:
+          "GitHub token lacks the `workflow` scope - pushes touching .github/workflows/* will be rejected",
+        detail: { granted },
+        hint: "Grant it with `gh auth refresh -h github.com -s workflow`, re-sign in to GitHub in VS Code and approve the workflow scope, or set GITHUB_TOKEN to a PAT that includes `workflow`.",
+      };
+    }
+    return {
+      name: "github-token-scope",
+      status: "ok",
+      message: "GitHub token has the `workflow` scope",
+      detail: { granted },
+    };
+  } catch (err) {
+    return {
+      name: "github-token-scope",
+      status: "skip",
+      message: "GitHub token scope check skipped (no token resolved, or GitHub unreachable)",
+      detail: { error: (err as Error).message },
+    };
+  }
+}
+
 function checkLanguage(projectDir: string): CheckResult {
   try {
     const lang = detectLanguage(projectDir);
@@ -732,6 +780,7 @@ export async function runDoctor(args: DoctorArgs = {}): Promise<DoctorReport> {
     host
   );
   const gitRemote = await checkGitRemote(projectDir);
+  const githubTokenScope = await checkGitHubTokenScope();
   const language = checkLanguage(projectDir);
   const hooks = checkHooks(projectDir);
   const workflowDrift = checkWorkflowDrift(projectDir);
@@ -763,6 +812,7 @@ export async function runDoctor(args: DoctorArgs = {}): Promise<DoctorReport> {
     configProfile,
     lakebaseProject,
     gitRemote,
+    githubTokenScope,
     language,
     hooks,
     workflowDrift,
