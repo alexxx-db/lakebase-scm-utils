@@ -5,7 +5,7 @@
 import * as path from "node:path";
 import { isCliEntry } from "../util/cli-entry.js";
 import {
-  ScmAbandonError,
+  ScmReleaseError,
   abandonFeatureBranch,
   type AbandonFeatureResult,
 } from "./scm-abandon-feature.js";
@@ -103,7 +103,7 @@ function renderHuman(report: AbandonReport): string {
 }
 
 function exitCodeForError(err: Error): number {
-  if (err instanceof ScmAbandonError) {
+  if (err instanceof ScmReleaseError) {
     if (err.code === "no-state-file") return 1;
     return 2;
   }
@@ -137,7 +137,7 @@ export async function runScmAbandonFeatureCli(
   } catch (e) {
     const err = e as Error;
     const code =
-      err instanceof ScmAbandonError ? err.code : "substrate-failure";
+      err instanceof ScmReleaseError ? err.code : "substrate-failure";
     const report: AbandonReport = {
       ok: false,
       error: { code, message: err.message },

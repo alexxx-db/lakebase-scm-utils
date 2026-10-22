@@ -13,28 +13,19 @@
 // completes the state reset.
 
 import { deletePairedBranch } from "./paired-branch.js";
-import { getCurrentBranch } from "../git/inspect.js";
-import { isDirty } from "../git/status.js";
-import { exec } from "../util/exec.js";
+import { type ScmWorkflowState } from "./scm-workflow-state.js";
 import {
-  readWorkflowState,
-  writeWorkflowState,
-  type ScmWorkflowState,
-} from "./scm-workflow-state.js";
+  ScmReleaseError,
+  prepareClaimRelease,
+  resetToScaffoldComplete,
+} from "./scm-release-claim.js";
 
-export class ScmAbandonError extends Error {
-  constructor(
-    message: string,
-    public readonly code:
-      | "no-state-file"
-      | "bad-precondition"
-      | "dirty-working-tree"
-      | "missing-claim-fields",
-  ) {
-    super(message);
-    this.name = "ScmAbandonError";
-  }
-}
+export { ScmReleaseError };
+
+/** Back-compat alias: abandon historically threw its own error class. It is now a subclass of the
+ *  shared `ScmReleaseError` so existing `instanceof ScmAbandonError` checks still narrow, while the
+ *  shared release core (which both abandon and park use) throws the base. */
+export class ScmAbandonError extends ScmReleaseError {}
 
 export interface AbandonFeatureArgs {
   projectDir: string;
@@ -64,76 +55,21 @@ export interface AbandonFeatureResult {
 export async function abandonFeatureBranch(
   args: AbandonFeatureArgs,
 ): Promise<AbandonFeatureResult> {
-  const current = readWorkflowState(args.projectDir);
-  if (!current) {
-    throw new ScmAbandonError(
-      `No SCM workflow state found at ${args.projectDir}/.lakebase/workflow-state.json.`,
-      "no-state-file",
-    );
-  }
-  if (current.state !== "feature-claimed") {
-    throw new ScmAbandonError(
-      `abandon refuses state "${current.state}". Only feature-claimed is abandonable; later states must complete or be reverted via gh.`,
-      "bad-precondition",
-    );
-  }
-  if (
-    !current.feature_id ||
-    !current.branch ||
-    !current.parent_branch ||
-    !current.lakebase_branch_uid
-  ) {
-    throw new ScmAbandonError(
-      "feature-claimed row is missing required invariants. Cannot abandon safely; consider re-adopting state first.",
-      "missing-claim-fields",
-    );
-  }
+  // Shared preamble: validate the claim is releasable + switch HEAD off the feature branch.
+  const { current, warnings } = await prepareClaimRelease(
+    { projectDir: args.projectDir, force: args.force, switchTo: args.switchTo },
+    "abandon",
+  );
 
-  if (!args.force) {
-    const dirty = await isDirty({ cwd: args.projectDir });
-    if (dirty) {
-      throw new ScmAbandonError(
-        "Working tree has uncommitted changes; refusing to abandon (the branch delete would lose them). Commit / stash / discard first, or pass --force.",
-        "dirty-working-tree",
-      );
-    }
-  }
-
-  const instance = args.instance ?? current.project_id;
-  const switchTo = args.switchTo ?? current.parent_branch;
-  const warnings: string[] = [];
-
-  // Switch HEAD off the feature branch first so deletePairedBranch can
-  // delete the local git branch (it skips when the branch is checked out).
-  const headBranch = await getCurrentBranch({ cwd: args.projectDir });
-  if (headBranch === current.branch) {
-    try {
-      await exec(`git checkout ${JSON.stringify(switchTo)}`, {
-        cwd: args.projectDir,
-        timeout: 10_000,
-      });
-    } catch (err) {
-      warnings.push(
-        `git checkout ${switchTo} failed: ${err instanceof Error ? err.message : String(err)}. Local branch delete may be skipped.`,
-      );
-    }
-  }
-
+  // Abandon's distinguishing step: tear down the paired Lakebase + git branch.
   const del = await deletePairedBranch({
-    instance,
+    instance: args.instance ?? current.project_id,
     branch: current.branch,
     cwd: args.projectDir,
   });
   warnings.push(...del.warnings);
 
-  const reset: ScmWorkflowState = {
-    $schema: current.$schema,
-    version: 1,
-    state: "scaffold-complete",
-    tier_topology: current.tier_topology,
-    project_id: current.project_id,
-  };
-  writeWorkflowState(args.projectDir, reset);
+  const reset: ScmWorkflowState = resetToScaffoldComplete(args.projectDir, current);
 
   return {
     state: reset,

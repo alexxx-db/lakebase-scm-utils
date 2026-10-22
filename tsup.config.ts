@@ -39,6 +39,7 @@ const entry = {
   "scripts/lakebase/scm-claim-feature.cli": "scripts/lakebase/scm-claim-feature.cli.ts",
   "scripts/lakebase/scm-adopt-state.cli": "scripts/lakebase/scm-adopt-state.cli.ts",
   "scripts/lakebase/scm-abandon-feature.cli": "scripts/lakebase/scm-abandon-feature.cli.ts",
+  "scripts/lakebase/scm-park-feature.cli": "scripts/lakebase/scm-park-feature.cli.ts",
   "scripts/lakebase/scm-prepare-pr.cli": "scripts/lakebase/scm-prepare-pr.cli.ts",
   "scripts/lakebase/scm-wait-ci.cli": "scripts/lakebase/scm-wait-ci.cli.ts",
   "scripts/lakebase/sync-ci-secrets.cli": "scripts/lakebase/sync-ci-secrets.cli.ts",
