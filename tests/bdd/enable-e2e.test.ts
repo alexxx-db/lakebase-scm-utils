@@ -207,6 +207,46 @@ describe("addE2eToRunTestsScript", () => {
     // A second call is now a no-op (base + client markers both present).
     expect(addE2eToRunTestsScript({ projectDir })).toEqual({ patched: true, inserted: false });
   });
+
+  it("does NOT clobber the primary body when the template HEADER quotes the marker (regression)", () => {
+    // consort's vendored run-tests.sh documents the E2E-assembly contract in a header
+    // comment that QUOTES the marker verbatim inside backticks. The old substring
+    // `indexOf(MARKER)` matched that prose mention and truncated the ENTIRE primary
+    // body (REPO_ROOT + pytest + vitest), leaving a hollow, always-exit-0 harness —
+    // the clobber that silently disabled every honest-GREEN + deploy verify. The
+    // marker must anchor to a standalone LINE, so the comment mention is ignored.
+    const scriptPath = path.join(projectDir, "scripts", "run-tests.sh");
+    fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+    const quotingTemplate = [
+      "#!/usr/bin/env bash",
+      "# E2E-ASSEMBLY CONTRACT: the block is appended per-project, delimited by the marker",
+      "# `# run Playwright E2E suite when configured`). Do NOT inline the E2E block here.",
+      "set -e",
+      'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+      'REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"',
+      'cd "$REPO_ROOT"',
+      'echo "primary suite"',
+      '(cd "$REPO_ROOT" && uv run --extra dev pytest --ignore=tests/e2e)',
+      '( cd "$REPO_ROOT/client" && npm test )',
+      "",
+    ].join("\n");
+    fs.writeFileSync(scriptPath, quotingTemplate, "utf8");
+
+    const result = addE2eToRunTestsScript({ projectDir });
+    expect(result).toEqual({ patched: true, inserted: true });
+    const after = fs.readFileSync(scriptPath, "utf8");
+
+    // The primary body SURVIVES (the clobber dropped exactly these).
+    expect(after).toMatch(/REPO_ROOT="\$\(cd "\$SCRIPT_DIR\/\.\." && pwd\)"/);
+    expect(after).toMatch(/pytest --ignore=tests\/e2e/);
+    expect(after).toMatch(/cd "\$REPO_ROOT\/client" && npm test/);
+    // The E2E block appended once; the header's quoted mention is NOT a standalone
+    // marker line, so only the real block's opening line counts.
+    expect(after).toMatch(/Running Playwright E2E tests/);
+    expect((after.match(/^# run Playwright E2E suite when configured$/gm) ?? []).length).toBe(1);
+    // Idempotent on the quoting template too.
+    expect(addE2eToRunTestsScript({ projectDir })).toEqual({ patched: true, inserted: false });
+  });
 });
 
 describe("ensurePythonE2eDeps (pyproject dev-extras patch)", () => {

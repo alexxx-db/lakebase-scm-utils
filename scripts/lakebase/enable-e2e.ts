@@ -202,6 +202,19 @@ const RUN_TESTS_E2E_MARKER = "# run Playwright E2E suite when configured";
  */
 const CLIENT_E2E_MARKER = "# run client Playwright E2E suite when configured";
 
+/**
+ * The markers matched ONLY as standalone lines (the appended block's own opening
+ * comment lines), never as substrings. The base run-tests.sh TEMPLATE documents the
+ * E2E-assembly contract in a header comment that QUOTES RUN_TESTS_E2E_MARKER verbatim
+ * inside backticks; a substring `includes`/`indexOf` match there matched the prose
+ * mention and truncated the ENTIRE primary-suite body (the run-tests.sh clobber that
+ * silently made every honest-GREEN + deploy verify exit 0). A line-anchored (`^…$`,
+ * multiline) match only ever finds the real block, never the documentation comment.
+ */
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const RUN_TESTS_E2E_MARKER_LINE = new RegExp(`^${escapeRe(RUN_TESTS_E2E_MARKER)}$`, "m");
+const CLIENT_E2E_MARKER_LINE = new RegExp(`^${escapeRe(CLIENT_E2E_MARKER)}$`, "m");
+
 /** The full E2E block appended to run-tests.sh (project-root layout + Python +
  *  the client-workspace layout). Built once so the fresh-insert and the in-place
  *  upgrade write byte-identical content. */
@@ -307,16 +320,33 @@ export function addE2eToRunTestsScript(
     return { patched: false, inserted: false };
   }
   const original = fs.readFileSync(scriptPath, "utf8");
-  const hasBase = original.includes(RUN_TESTS_E2E_MARKER);
-  const hasClient = original.includes(CLIENT_E2E_MARKER);
+  // Match markers as standalone LINES, not substrings (see RUN_TESTS_E2E_MARKER_LINE):
+  // a prose mention in the template header must never be treated as the block boundary.
+  const baseMarker = RUN_TESTS_E2E_MARKER_LINE.exec(original);
+  const hasBase = baseMarker !== null;
+  const hasClient = CLIENT_E2E_MARKER_LINE.test(original);
   if (hasBase && hasClient) {
     return { patched: true, inserted: false }; // already the current block
   }
   // Truncate an OLD block (base marker present, client branch missing) so we replace
   // rather than duplicate; else append to the end after the language-specific suite.
-  const cut = hasBase ? original.slice(0, original.indexOf(RUN_TESTS_E2E_MARKER)) : original;
+  const cut = hasBase ? original.slice(0, baseMarker!.index) : original;
   const base = cut.replace(/\n+$/, "\n");
-  fs.writeFileSync(scriptPath, base + runTestsE2eBlock(), "utf8");
+  const assembled = base + runTestsE2eBlock();
+  // FAIL-CLOSED: never ship a run-tests.sh that lost its primary suite. The base
+  // template assigns REPO_ROOT and runs the pytest/vitest body; if the ORIGINAL
+  // carried that body but the ASSEMBLED result would not, the cut dropped real
+  // content — throw rather than write a hollow, always-exit-0 harness (the clobber
+  // defect). A genuinely body-less original (nothing to preserve) is untouched.
+  const BODY_SENTINEL = 'REPO_ROOT="$(cd';
+  if (original.includes(BODY_SENTINEL) && !assembled.includes(BODY_SENTINEL)) {
+    throw new Error(
+      `addE2eToRunTestsScript: refusing to write ${scriptPath} — the E2E assembly would drop the ` +
+        `primary-suite body (REPO_ROOT/pytest/vitest). This is the marker-match clobber; the marker ` +
+        `must anchor to the appended block's own line, not a prose mention.`,
+    );
+  }
+  fs.writeFileSync(scriptPath, assembled, "utf8");
   return { patched: true, inserted: true };
 }
 
